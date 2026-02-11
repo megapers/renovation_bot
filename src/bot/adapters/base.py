@@ -9,7 +9,15 @@ remain completely platform-independent.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class MessageType(str, Enum):
+    """Type of incoming user message (mirrors db enum)."""
+    TEXT = "text"
+    VOICE = "voice"
+    IMAGE = "image"
 
 
 @dataclass
@@ -20,8 +28,12 @@ class IncomingMessage:
     chat_id: str            # unique chat identifier (group or private)
     user_id: str            # unique user identifier on the platform
     user_name: str          # display name
-    text: str               # message text content
-    is_group: bool = False  # True if the message comes from a group chat
+    text: str               # message text (original for text, caption for image, empty for voice)
+    message_type: MessageType = MessageType.TEXT
+    message_id: str | None = None   # platform-specific message ID
+    file_id: str | None = None      # platform file reference (e.g. Telegram file_id)
+    file_url: str | None = None     # direct URL to the file (if available)
+    is_group: bool = False           # True if the message comes from a group chat
 
 
 @dataclass

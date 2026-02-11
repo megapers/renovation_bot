@@ -35,6 +35,26 @@ All bot logic must be **platform-agnostic**. The codebase should follow a layere
 
 Platform-specific code (Telegram API calls, WhatsApp webhook parsing) must be isolated in adapter modules, never mixed into core logic.
 
+### Message Handling Strategy
+
+Users may send different types of messages: **text**, **images (photos)**, and **voice messages**. The bot must handle all of them, but the core principle is:
+
+> **Every incoming message — regardless of type — must be converted to a text representation and stored in the database.** This text is the basis for the RAG system, semantic search, budgeting, reporting, and planning.
+
+Message processing pipeline per type:
+
+| Message Type | Processing | Stored Text |
+|---|---|---|
+| **Text** | Used as-is | Original message text |
+| **Voice** | Transcribed via Azure OpenAI Whisper (or similar STT) | Transcription result |
+| **Image/Photo** | Caption extracted; optional OCR or GPT-4 Vision description | Caption + AI-generated description |
+
+Implementation approach:
+1. **Phase 1–3 (MVP):** Only text messages are processed. Voice and image messages are acknowledged but not parsed.
+2. **Phase 8+:** Voice transcription (STT) and image understanding are added. All historical messages already have the `message_type` field, so they can be backfilled.
+3. **Storage:** Every message is stored in a `messages` table with its type, raw content reference (file IDs, URLs), transcribed text, and link to the project. The transcribed text is embedded via pgvector for semantic search.
+4. **Platform adapters** are responsible for downloading media files and passing them to core services for transcription/description. Core logic never calls platform-specific download APIs.
+
 ---
 
 ## Requirements Summary (translated from Russian originals in `/Requirements/`)
@@ -316,12 +336,12 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 1 — Foundation & Infrastructure
 
-- [ ] Set up PostgreSQL + TimescaleDB via Docker Compose
-- [ ] Design database schema: projects, stages, sub-stages, budgets, users, roles, change history
-- [ ] Enable pgvector extension (HNSW indexes for vector search)
-- [ ] Set up Telegram bot skeleton with webhook/polling
-- [ ] Define platform adapter interface for future multi-platform support
-- [ ] Implement user registration & START command handling
+- [x] Set up PostgreSQL + TimescaleDB via Docker Compose
+- [x] Design database schema: projects, stages, sub-stages, budgets, users, roles, change history, messages
+- [x] Enable pgvector extension (HNSW indexes for vector search)
+- [x] Set up Telegram bot skeleton with webhook/polling
+- [x] Define platform adapter interface for future multi-platform support (with message type support: text, voice, image)
+- [x] Implement user registration & START command handling
 
 ### Phase 2 — Project Creation Flow
 
@@ -368,12 +388,15 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 - [ ] On-demand reports via quick commands
 - [ ] Implement all quick commands: `budget`, `stages`, `expenses`, `report`, `next stage`, `my stage`, `status`, `deadline`, `send photo`, `expert`
 
-### Phase 8 — AI Text Processing
+### Phase 8 — AI Text Processing & Media Understanding
 
 - [ ] Integrate LLM for natural language parsing of stage descriptions
 - [ ] Auto-extract durations, sub-stages, and dates from foreman/designer messages
 - [ ] Embed project documents and chat history using pgvector (HNSW) for semantic search
 - [ ] RAG pipeline for context-aware bot responses
+- [ ] Voice message transcription via Azure OpenAI Whisper (STT)
+- [ ] Image understanding: caption extraction, optional OCR / GPT-4 Vision description
+- [ ] Backfill embeddings for historical voice/image messages
 
 ### Phase 9 — Expert Integration
 

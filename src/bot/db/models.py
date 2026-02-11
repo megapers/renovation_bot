@@ -9,6 +9,8 @@ This module defines the complete database schema:
 - SubStage     — a task within a stage (e.g. "Remove bathroom tiles")
 - BudgetItem   — budget tracking per category
 - ChangeLog    — immutable audit trail for all budget/stage changes
+- Message      — every incoming message (text/voice/image), stored as text for RAG
+- Embedding    — vector embeddings for semantic search
 """
 
 import enum
@@ -72,6 +74,13 @@ class PaymentStatus(str, enum.Enum):
     VERIFIED = "verified"
     PAID = "paid"
     CLOSED = "closed"
+
+
+class MessageType(str, enum.Enum):
+    """Type of incoming user message."""
+    TEXT = "text"
+    VOICE = "voice"
+    IMAGE = "image"
 
 
 # ── Models ────────────────────────────────────────────────────
@@ -229,6 +238,46 @@ class ChangeLog(Base):
     project: Mapped["Project"] = relationship(back_populates="change_logs")
     user: Mapped["User | None"] = relationship(foreign_keys=[user_id])
     confirmed_by: Mapped["User | None"] = relationship(foreign_keys=[confirmed_by_user_id])
+
+
+class Message(Base):
+    """
+    Every incoming message — text, voice, or image — stored as text for RAG.
+
+    In Phase 1–3, only text messages are fully processed. Voice and image
+    messages are acknowledged and stored with message_type set, but their
+    transcribed_text is populated later (Phase 8+) when STT / Vision
+    services are integrated.
+
+    The transcribed_text field is the canonical text used for:
+    - Semantic search (pgvector embeddings)
+    - Budget extraction and reporting
+    - RAG context for AI responses
+    """
+
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    platform: Mapped[str] = mapped_column(String(20))  # "telegram", "whatsapp"
+    platform_chat_id: Mapped[str] = mapped_column(String(100))  # chat identifier on the platform
+    platform_message_id: Mapped[str | None] = mapped_column(String(100))  # message ID on the platform
+    message_type: Mapped[MessageType] = mapped_column(
+        Enum(MessageType, name="message_type"), default=MessageType.TEXT
+    )
+    # Original text content (for text messages) or caption (for images)
+    raw_text: Mapped[str | None] = mapped_column(Text)
+    # Platform file reference (file_id for Telegram, URL for WhatsApp)
+    file_ref: Mapped[str | None] = mapped_column(Text)
+    # Text produced by STT (voice) or Vision AI (image); same as raw_text for text messages
+    transcribed_text: Mapped[str | None] = mapped_column(Text)
+    is_from_bot: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    project: Mapped["Project | None"] = relationship()
+    user: Mapped["User | None"] = relationship()
 
 
 class Embedding(Base):
