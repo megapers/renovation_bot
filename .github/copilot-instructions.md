@@ -345,11 +345,11 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 2 — Project Creation Flow
 
-- [ ] Implement guided project creation (property name, address, type, budget, coordinator)
-- [ ] Add second client (co-owner) flow
-- [ ] Auto-generate standard renovation stages
+- [x] Implement guided project creation (property name, address, type, budget, coordinator)
+- [x] Add second client (co-owner) flow
+- [x] Auto-generate standard renovation stages
 - [ ] Allow stage list editing (add/remove/reorder)
-- [ ] Implement parallel stages for custom furniture/fittings
+- [x] Implement parallel stages for custom furniture/fittings
 
 ### Phase 3 — Deadline & Assignment Management
 

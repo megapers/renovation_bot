@@ -13,6 +13,7 @@ from aiogram.enums import ParseMode
 
 from bot.adapters.base import OutgoingMessage, PlatformAdapter
 from bot.adapters.telegram.handlers import router as handlers_router
+from bot.adapters.telegram.project_handlers import router as project_router
 from bot.config import settings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class TelegramAdapter(PlatformAdapter):
     def _register_routers(self) -> None:
         """Attach all handler routers to the dispatcher."""
         self.dp.include_router(handlers_router)
+        self.dp.include_router(project_router)
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""
