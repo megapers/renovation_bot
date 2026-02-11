@@ -1,0 +1,48 @@
+[project]
+name = "renovation-bot"
+version = "0.1.0"
+description = "A chatbot assistant for home renovation project management"
+requires-python = ">=3.12"
+dependencies = [
+    # Bot framework (Telegram)
+    "aiogram>=3.15,<4",
+    # Web framework (webhooks, future API)
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    # Database
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.30,<1",
+    "alembic>=1.14,<2",
+    # Validation & settings
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    # AI / LLM
+    "openai>=1.59,<2",
+    # pgvector support for SQLAlchemy
+    "pgvector>=0.3,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
