@@ -52,3 +52,17 @@ class RoleManagementState(str, enum.Enum):
     CHOOSING_ROLE = "role_management:choosing_role"
     ENTERING_CONTACT = "role_management:entering_contact"
     CONFIRMING_INVITE = "role_management:confirming_invite"
+
+
+class BudgetManagementState(str, enum.Enum):
+    """States for budget and expense tracking."""
+
+    SELECTING_PROJECT = "budget:selecting_project"
+    VIEWING_BUDGET = "budget:viewing_budget"
+    SELECTING_CATEGORY = "budget:selecting_category"
+    ENTERING_DESCRIPTION = "budget:entering_description"
+    ENTERING_WORK_COST = "budget:entering_work_cost"
+    ENTERING_MATERIAL_COST = "budget:entering_material_cost"
+    ENTERING_PREPAYMENT = "budget:entering_prepayment"
+    VIEWING_ITEM = "budget:viewing_item"
+    VIEWING_HISTORY = "budget:viewing_history"

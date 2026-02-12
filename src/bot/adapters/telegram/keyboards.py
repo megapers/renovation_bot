@@ -400,3 +400,218 @@ def stage_status_keyboard(stage_id: int) -> InlineKeyboardMarkup:
             ),
         ],
     ])
+
+
+# ── Budget keyboards (Phase 6) ───────────────────────────────
+
+
+def budget_category_keyboard() -> InlineKeyboardMarkup:
+    """Select a budget category for a new expense."""
+    from bot.core.budget_service import CATEGORY_LABELS
+    from bot.db.models import BudgetCategory
+
+    rows: list[list[InlineKeyboardButton]] = []
+    # Two columns layout
+    cats = list(BudgetCategory)
+    for i in range(0, len(cats), 2):
+        row = []
+        for cat in cats[i:i + 2]:
+            label = CATEGORY_LABELS.get(cat.value, cat.value)
+            row.append(InlineKeyboardButton(
+                text=label,
+                callback_data=f"bcat:{cat.value}",
+            ))
+        rows.append(row)
+
+    rows.append([
+        InlineKeyboardButton(text="❌ Отмена", callback_data="bcat:cancel"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def budget_overview_keyboard(project_id: int) -> InlineKeyboardMarkup:
+    """Actions available from the budget overview screen."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="➕ Добавить расход",
+                callback_data=f"badd:{project_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📊 По категориям",
+                callback_data=f"bcats:{project_id}",
+            ),
+            InlineKeyboardButton(
+                text="🔍 Не подтверждённые",
+                callback_data=f"bunconf:{project_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📜 История изменений",
+                callback_data=f"bhist:{project_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="💳 Оплата этапов",
+                callback_data=f"bpay:{project_id}",
+            ),
+        ],
+    ])
+
+
+def budget_item_keyboard(item_id: int, is_confirmed: bool) -> InlineKeyboardMarkup:
+    """Actions for a single budget item."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if not is_confirmed:
+        rows.append([
+            InlineKeyboardButton(
+                text="✅ Подтвердить",
+                callback_data=f"bconf:{item_id}",
+            ),
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text="🗑 Удалить",
+            callback_data=f"bdel:{item_id}",
+        ),
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text="↩️ К бюджету",
+            callback_data="bback",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def budget_items_list_keyboard(
+    items: Sequence,
+    project_id: int,
+) -> InlineKeyboardMarkup:
+    """List budget items as buttons."""
+    from bot.core.budget_service import get_category_label
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for item in items:
+        confirmed = "✅" if item.is_confirmed else "❓"
+        total = float(item.work_cost) + float(item.material_cost)
+        label = f"{confirmed} {get_category_label(item.category)}: {total:,.0f} ₸"
+        if len(label) > 50:
+            label = label[:47] + "..."
+        rows.append([
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"bitem:{item.id}",
+            ),
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text="↩️ К бюджету",
+            callback_data="bback",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def payment_status_keyboard(stage_id: int, current_status: str) -> InlineKeyboardMarkup:
+    """Show available payment status transitions for a stage."""
+    from bot.core.budget_service import (
+        PAYMENT_STATUS_LABELS,
+        get_allowed_payment_transitions,
+    )
+
+    transitions = get_allowed_payment_transitions(current_status)
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for status in transitions:
+        label = PAYMENT_STATUS_LABELS.get(status, status)
+        rows.append([
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"bpysts:{status}:{stage_id}",
+            ),
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text="↩️ Назад",
+            callback_data="bback",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def payment_stages_keyboard(stages: Sequence) -> InlineKeyboardMarkup:
+    """Show stages with their payment status for selection."""
+    from bot.core.budget_service import PAYMENT_STATUS_ICONS
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for stage in stages:
+        icon = PAYMENT_STATUS_ICONS.get(stage.payment_status.value, "📝")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{icon} {stage.order}. {stage.name}",
+                callback_data=f"bpay_stg:{stage.id}",
+            ),
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text="↩️ К бюджету",
+            callback_data="bback",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def expense_type_keyboard() -> InlineKeyboardMarkup:
+    """Choose what type of expense to enter."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔨 Работа",
+                callback_data="betype:work",
+            ),
+            InlineKeyboardButton(
+                text="🧱 Материалы",
+                callback_data="betype:material",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="💵 Предоплата",
+                callback_data="betype:prepayment",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔨+🧱 Работа + Материалы",
+                callback_data="betype:both",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="betype:cancel",
+            ),
+        ],
+    ])
+
+
+def skip_amount_keyboard() -> InlineKeyboardMarkup:
+    """Skip entering an optional amount (0)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⏭ Пропустить (0 ₸)",
+                callback_data="bskip:0",
+            ),
+        ],
+    ])

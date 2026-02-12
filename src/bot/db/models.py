@@ -76,6 +76,21 @@ class PaymentStatus(str, enum.Enum):
     CLOSED = "closed"
 
 
+class BudgetCategory(str, enum.Enum):
+    """Standard budget categories for renovation tracking."""
+    ELECTRICAL = "electrical"
+    PLUMBING = "plumbing"
+    WALLS = "walls"
+    FLOORING = "flooring"
+    TILING = "tiling"
+    CEILINGS = "ceilings"
+    DOORS = "doors"
+    FURNITURE = "furniture"
+    DEMOLITION = "demolition"
+    PAINTING = "painting"
+    OTHER = "other"
+
+
 class MessageType(str, enum.Enum):
     """Type of incoming user message."""
     TEXT = "text"
@@ -201,16 +216,30 @@ class SubStage(Base):
 
 
 class BudgetItem(Base):
-    """Budget tracking per category within a project."""
+    """Budget tracking per category within a project.
+
+    Each item represents a line-item expense: work cost, material cost,
+    or prepayment. Items are categorised (electrical, plumbing, etc.)
+    and optionally linked to a specific stage.
+
+    Confirmation workflow:
+      - Items are created unconfirmed (is_confirmed=False)
+      - Owner confirms each item (is_confirmed=True, confirmed_by_user_id set)
+      - Only confirmed items count toward final budget reports
+    """
 
     __tablename__ = "budget_items"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    category: Mapped[str] = mapped_column(String(100))  # e.g. "electrical", "plumbing"
+    stage_id: Mapped[int | None] = mapped_column(ForeignKey("stages.id", ondelete="SET NULL"), index=True)
+    category: Mapped[str] = mapped_column(String(100))  # BudgetCategory value or free text
+    description: Mapped[str | None] = mapped_column(Text)  # what this expense is for
     work_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     material_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     prepayment: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -218,6 +247,8 @@ class BudgetItem(Base):
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="budget_items")
+    stage: Mapped["Stage | None"] = relationship()
+    confirmed_by: Mapped["User | None"] = relationship()
 
 
 class ChangeLog(Base):

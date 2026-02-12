@@ -82,3 +82,27 @@ class RoleManagement(StatesGroup):
     choosing_role = State()            # Select which role to assign
     entering_contact = State()         # Enter @username or forward a message
     confirming_invite = State()        # Confirm the invitation
+
+
+class BudgetManagement(StatesGroup):
+    """
+    States for budget and expense tracking.
+
+    Accessed via /budget and /expenses commands.
+
+    FSM data keys used:
+      project_id  — current project
+      category    — selected budget category
+      stage_id    — optional stage link
+      item_id     — budget item being viewed/edited
+    """
+
+    selecting_project = State()        # Pick project (if user has multiple)
+    viewing_budget = State()           # Browsing budget overview
+    selecting_category = State()       # Choosing expense category
+    entering_description = State()     # Expense description
+    entering_work_cost = State()       # Work cost amount
+    entering_material_cost = State()   # Material cost amount
+    entering_prepayment = State()      # Prepayment amount
+    viewing_item = State()             # Viewing a single budget item
+    viewing_history = State()          # Viewing change history

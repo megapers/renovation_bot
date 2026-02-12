@@ -208,3 +208,156 @@ def format_team_list(
         status = "" if started else " ⚠️ (не запустил бота)"
         lines.append(f"• <b>{name}</b> — {role_text}{status}")
     return "\n".join(lines)
+
+
+# ── Budget formatting (Phase 6) ──────────────────────────────
+
+
+def format_budget_overview(
+    project_name: str,
+    total_budget: float | None,
+    summary: dict,
+    category_summaries: list[dict],
+) -> str:
+    """
+    Format a project budget overview with HTML markup.
+
+    Args:
+        project_name: project name
+        total_budget: total project budget (may be None)
+        summary: dict from get_project_budget_summary
+        category_summaries: list from get_budget_summary_by_category
+    """
+    from bot.core.budget_service import analyze_budget, get_category_label
+
+    lines: list[str] = [
+        f"💰 <b>Бюджет проекта «{project_name}»</b>",
+        "",
+    ]
+
+    # Total budget info
+    if total_budget:
+        lines.append(f"📊 Общий бюджет: <b>{total_budget:,.0f} ₸</b>")
+    else:
+        lines.append("📊 Общий бюджет: <i>не задан</i>")
+
+    total_spent = summary["total_spent"]
+    total_work = summary["total_work"]
+    total_materials = summary["total_materials"]
+    total_prepayments = summary["total_prepayments"]
+
+    lines.append(f"🔨 Работа: {total_work:,.0f} ₸")
+    lines.append(f"🧱 Материалы: {total_materials:,.0f} ₸")
+    lines.append(f"💵 Предоплаты: {total_prepayments:,.0f} ₸")
+    lines.append(f"📝 <b>Итого расходы: {total_spent:,.0f} ₸</b>")
+
+    # Budget analysis
+    analysis = analyze_budget(total_budget, total_spent, total_prepayments)
+    if analysis["has_budget"]:
+        status_icon = {"ok": "✅", "warning": "⚠️", "over": "🚨"}.get(
+            analysis["status"], ""
+        )
+        lines.append("")
+        lines.append(f"{status_icon} {analysis['message']}")
+
+    # By category
+    if category_summaries:
+        lines.append("")
+        lines.append("<b>По категориям:</b>")
+        for cat_info in category_summaries:
+            label = get_category_label(cat_info["category"])
+            total = cat_info["total"]
+            confirmed = cat_info["confirmed"]
+            conf_icon = "✅" if confirmed == total and total > 0 else "❓"
+            lines.append(f"  {label}: {total:,.0f} ₸ {conf_icon}")
+
+    return "\n".join(lines)
+
+
+def format_budget_item_detail(item) -> str:
+    """Format a single budget item with HTML markup."""
+    from bot.core.budget_service import get_category_label
+
+    lines: list[str] = []
+    label = get_category_label(item.category)
+    confirmed = "✅ Подтверждено" if item.is_confirmed else "❓ Не подтверждено"
+
+    lines.append(f"💰 <b>{label}</b>")
+    lines.append(f"Статус: {confirmed}")
+
+    if item.description:
+        lines.append(f"📝 {item.description}")
+    lines.append("")
+
+    work = float(item.work_cost)
+    mat = float(item.material_cost)
+    pre = float(item.prepayment)
+
+    if work > 0:
+        lines.append(f"🔨 Работа: {work:,.0f} ₸")
+    if mat > 0:
+        lines.append(f"🧱 Материалы: {mat:,.0f} ₸")
+    if pre > 0:
+        lines.append(f"💵 Предоплата: {pre:,.0f} ₸")
+
+    total = work + mat
+    lines.append(f"<b>Итого: {total:,.0f} ₸</b>")
+
+    if item.stage:
+        lines.append(f"\n🔗 Этап: {item.stage.name}")
+
+    lines.append(f"\n📅 Создано: {item.created_at.strftime('%d.%m.%Y %H:%M')}")
+
+    return "\n".join(lines)
+
+
+def format_change_history(logs: list) -> str:
+    """Format change history entries with HTML markup."""
+    if not logs:
+        return "📜 <b>История изменений</b>\n\nИзменений пока нет."
+
+    lines: list[str] = ["📜 <b>История изменений</b>", ""]
+
+    for log in logs:
+        date_str = log.created_at.strftime("%d.%m.%Y %H:%M")
+        user_name = log.user.full_name if log.user else "Система"
+        confirmed = ""
+        if log.confirmed_by:
+            confirmed = f" (подтв. {log.confirmed_by.full_name})"
+
+        lines.append(
+            f"• <b>{date_str}</b> — {user_name}{confirmed}\n"
+            f"  {log.entity_type}.{log.field_name}: "
+            f"{log.old_value or '—'} → {log.new_value or '—'}"
+        )
+
+    return "\n".join(lines)
+
+
+def format_payment_stage_detail(stage) -> str:
+    """Format a stage's payment status detail."""
+    from bot.core.budget_service import (
+        PAYMENT_STATUS_LABELS,
+        check_payment_risk,
+    )
+
+    status_label = PAYMENT_STATUS_LABELS.get(
+        stage.payment_status.value, stage.payment_status.value
+    )
+
+    lines: list[str] = [
+        f"💳 <b>Оплата: {stage.name}</b>",
+        "",
+        f"Статус оплаты: {status_label}",
+    ]
+
+    if stage.budget:
+        lines.append(f"Бюджет этапа: {float(stage.budget):,.0f} ₸")
+
+    # Payment risk warning
+    risk = check_payment_risk(stage.status.value, stage.payment_status.value)
+    if risk:
+        lines.append("")
+        lines.append(risk)
+
+    return "\n".join(lines)

@@ -12,6 +12,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from bot.adapters.base import OutgoingMessage, PlatformAdapter
+from bot.adapters.telegram.budget_handlers import router as budget_router
 from bot.adapters.telegram.handlers import router as handlers_router
 from bot.adapters.telegram.group_handlers import router as group_router
 from bot.adapters.telegram.middleware import RoleMiddleware
@@ -53,6 +54,7 @@ class TelegramAdapter(PlatformAdapter):
         self.dp.include_router(stage_router)           # /stages, /launch
         self.dp.include_router(notification_router)    # checkpoint approval, status changes
         self.dp.include_router(role_router)            # /team, /invite, /myrole
+        self.dp.include_router(budget_router)          # /budget, /expenses
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""

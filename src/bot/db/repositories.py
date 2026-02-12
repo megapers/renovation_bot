@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.db.models import (
     BudgetItem,
+    ChangeLog,
     Project,
     ProjectRole,
     RenovationType,
@@ -772,3 +773,358 @@ async def get_user_by_id(
         select(User).where(User.id == user_id)
     )
     return result.scalar_one_or_none()
+
+
+# ── Budget management (Phase 6) ─────────────────────────────
+
+
+async def create_budget_item(
+    session: AsyncSession,
+    *,
+    project_id: int,
+    category: str,
+    description: str | None = None,
+    work_cost: float = 0,
+    material_cost: float = 0,
+    prepayment: float = 0,
+    stage_id: int | None = None,
+) -> BudgetItem:
+    """Create a new budget item (expense line)."""
+    item = BudgetItem(
+        project_id=project_id,
+        stage_id=stage_id,
+        category=category,
+        description=description,
+        work_cost=work_cost,
+        material_cost=material_cost,
+        prepayment=prepayment,
+    )
+    session.add(item)
+    await session.flush()
+    logger.info(
+        "Created budget item id=%d cat=%s project_id=%d (work=%.2f mat=%.2f pre=%.2f)",
+        item.id, category, project_id, work_cost, material_cost, prepayment,
+    )
+    return item
+
+
+async def get_budget_items_for_project(
+    session: AsyncSession,
+    project_id: int,
+) -> Sequence[BudgetItem]:
+    """Get all budget items for a project, ordered by category."""
+    result = await session.execute(
+        select(BudgetItem)
+        .where(BudgetItem.project_id == project_id)
+        .order_by(BudgetItem.category, BudgetItem.created_at)
+    )
+    return result.scalars().all()
+
+
+async def get_budget_items_for_stage(
+    session: AsyncSession,
+    stage_id: int,
+) -> Sequence[BudgetItem]:
+    """Get all budget items linked to a specific stage."""
+    result = await session.execute(
+        select(BudgetItem)
+        .where(BudgetItem.stage_id == stage_id)
+        .order_by(BudgetItem.category, BudgetItem.created_at)
+    )
+    return result.scalars().all()
+
+
+async def get_budget_items_by_category(
+    session: AsyncSession,
+    project_id: int,
+    category: str,
+) -> Sequence[BudgetItem]:
+    """Get all budget items for a specific category in a project."""
+    result = await session.execute(
+        select(BudgetItem)
+        .where(
+            BudgetItem.project_id == project_id,
+            BudgetItem.category == category,
+        )
+        .order_by(BudgetItem.created_at)
+    )
+    return result.scalars().all()
+
+
+async def get_budget_item_by_id(
+    session: AsyncSession,
+    item_id: int,
+) -> BudgetItem | None:
+    """Get a budget item by ID."""
+    result = await session.execute(
+        select(BudgetItem).where(BudgetItem.id == item_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_budget_item(
+    session: AsyncSession,
+    item_id: int,
+    **fields: Any,
+) -> BudgetItem | None:
+    """Update a budget item's fields."""
+    result = await session.execute(
+        select(BudgetItem).where(BudgetItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        return None
+    for key, value in fields.items():
+        setattr(item, key, value)
+    await session.flush()
+    logger.info("Updated budget item id=%d: %s", item_id, list(fields.keys()))
+    return item
+
+
+async def confirm_budget_item(
+    session: AsyncSession,
+    item_id: int,
+    confirmed_by_user_id: int,
+) -> BudgetItem | None:
+    """Confirm a budget item (only owner should call this)."""
+    result = await session.execute(
+        select(BudgetItem).where(BudgetItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        return None
+    item.is_confirmed = True
+    item.confirmed_by_user_id = confirmed_by_user_id
+    await session.flush()
+    logger.info("Confirmed budget item id=%d by user_id=%d", item_id, confirmed_by_user_id)
+    return item
+
+
+async def delete_budget_item(
+    session: AsyncSession,
+    item_id: int,
+) -> bool:
+    """Delete a budget item. Returns True if deleted."""
+    result = await session.execute(
+        select(BudgetItem).where(BudgetItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        return False
+    await session.delete(item)
+    await session.flush()
+    logger.info("Deleted budget item id=%d", item_id)
+    return True
+
+
+async def get_budget_summary_by_category(
+    session: AsyncSession,
+    project_id: int,
+) -> list[dict]:
+    """
+    Get budget totals grouped by category.
+
+    Returns list of:
+      {"category": str, "work": float, "materials": float,
+       "prepayments": float, "total": float, "confirmed": float}
+    """
+    result = await session.execute(
+        select(
+            BudgetItem.category,
+            func.coalesce(func.sum(BudgetItem.work_cost), 0),
+            func.coalesce(func.sum(BudgetItem.material_cost), 0),
+            func.coalesce(func.sum(BudgetItem.prepayment), 0),
+        )
+        .where(BudgetItem.project_id == project_id)
+        .group_by(BudgetItem.category)
+        .order_by(BudgetItem.category)
+    )
+    rows = result.all()
+
+    # Also get confirmed totals
+    confirmed_result = await session.execute(
+        select(
+            BudgetItem.category,
+            func.coalesce(func.sum(BudgetItem.work_cost + BudgetItem.material_cost), 0),
+        )
+        .where(
+            BudgetItem.project_id == project_id,
+            BudgetItem.is_confirmed == True,  # noqa: E712
+        )
+        .group_by(BudgetItem.category)
+    )
+    confirmed_map = {r[0]: float(r[1]) for r in confirmed_result.all()}
+
+    summaries = []
+    for row in rows:
+        cat = row[0]
+        work = float(row[1])
+        materials = float(row[2])
+        prepayments = float(row[3])
+        summaries.append({
+            "category": cat,
+            "work": work,
+            "materials": materials,
+            "prepayments": prepayments,
+            "total": work + materials,
+            "confirmed": confirmed_map.get(cat, 0.0),
+        })
+    return summaries
+
+
+async def get_unconfirmed_budget_items(
+    session: AsyncSession,
+    project_id: int,
+) -> Sequence[BudgetItem]:
+    """Get all unconfirmed budget items for a project."""
+    result = await session.execute(
+        select(BudgetItem)
+        .where(
+            BudgetItem.project_id == project_id,
+            BudgetItem.is_confirmed == False,  # noqa: E712
+        )
+        .order_by(BudgetItem.created_at)
+    )
+    return result.scalars().all()
+
+
+# ── Change log (Phase 6) ────────────────────────────────────
+
+
+async def create_change_log(
+    session: AsyncSession,
+    *,
+    project_id: int,
+    user_id: int | None,
+    entity_type: str,
+    entity_id: int,
+    field_name: str,
+    old_value: str | None,
+    new_value: str | None,
+    confirmed_by_user_id: int | None = None,
+) -> ChangeLog:
+    """Create an immutable audit trail entry."""
+    log = ChangeLog(
+        project_id=project_id,
+        user_id=user_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        field_name=field_name,
+        old_value=old_value,
+        new_value=new_value,
+        confirmed_by_user_id=confirmed_by_user_id,
+    )
+    session.add(log)
+    await session.flush()
+    logger.info(
+        "Change log: %s.%d.%s: %s → %s (project_id=%d)",
+        entity_type, entity_id, field_name,
+        old_value, new_value, project_id,
+    )
+    return log
+
+
+async def get_change_logs_for_project(
+    session: AsyncSession,
+    project_id: int,
+    entity_type: str | None = None,
+    limit: int = 50,
+) -> Sequence[ChangeLog]:
+    """Get recent change logs for a project, optionally filtered by entity type."""
+    query = (
+        select(ChangeLog)
+        .where(ChangeLog.project_id == project_id)
+        .options(
+            selectinload(ChangeLog.user),
+            selectinload(ChangeLog.confirmed_by),
+        )
+        .order_by(ChangeLog.created_at.desc())
+        .limit(limit)
+    )
+    if entity_type:
+        query = query.where(ChangeLog.entity_type == entity_type)
+    result = await session.execute(query)
+    return result.scalars().all()
+
+
+async def get_change_logs_for_entity(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+) -> Sequence[ChangeLog]:
+    """Get all change logs for a specific entity."""
+    result = await session.execute(
+        select(ChangeLog)
+        .where(
+            ChangeLog.entity_type == entity_type,
+            ChangeLog.entity_id == entity_id,
+        )
+        .options(
+            selectinload(ChangeLog.user),
+            selectinload(ChangeLog.confirmed_by),
+        )
+        .order_by(ChangeLog.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+# ── Payment status queries (Phase 6) ────────────────────────
+
+
+async def get_stages_by_payment_status(
+    session: AsyncSession,
+    project_id: int,
+    payment_status: str | None = None,
+) -> Sequence[Stage]:
+    """Get stages filtered by payment status."""
+    query = (
+        select(Stage)
+        .where(Stage.project_id == project_id)
+        .order_by(Stage.order)
+    )
+    if payment_status:
+        from bot.db.models import PaymentStatus
+        query = query.where(Stage.payment_status == PaymentStatus(payment_status))
+    result = await session.execute(query)
+    return result.scalars().all()
+
+
+async def update_stage_payment_status(
+    session: AsyncSession,
+    stage_id: int,
+    payment_status: str,
+    user_id: int | None = None,
+) -> Stage | None:
+    """
+    Update a stage's payment status and log the change.
+
+    Returns the updated stage.
+    """
+    from bot.db.models import PaymentStatus
+
+    result = await session.execute(
+        select(Stage).where(Stage.id == stage_id)
+    )
+    stage = result.scalar_one_or_none()
+    if stage is None:
+        return None
+
+    old_status = stage.payment_status.value
+    new_status = PaymentStatus(payment_status)
+    stage.payment_status = new_status
+    await session.flush()
+
+    # Log the change
+    await create_change_log(
+        session,
+        project_id=stage.project_id,
+        user_id=user_id,
+        entity_type="stage",
+        entity_id=stage.id,
+        field_name="payment_status",
+        old_value=old_status,
+        new_value=payment_status,
+    )
+
+    logger.info("Stage id=%d payment status: %s → %s", stage_id, old_status, payment_status)
+    return stage

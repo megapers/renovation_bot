@@ -376,11 +376,11 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 6 — Budget & Payment Tracking
 
-- [ ] Budget tracking by category (electrical, plumbing, walls, etc.)
-- [ ] Work vs. materials vs. prepayments breakdown
-- [ ] Stage payment lifecycle: Recorded → In progress → Verified → Paid → Closed
-- [ ] Budget change history with confirmation workflow
-- [ ] Payment risk warnings for unverified stages
+- [x] Budget tracking by category (electrical, plumbing, walls, etc.)
+- [x] Work vs. materials vs. prepayments breakdown
+- [x] Stage payment lifecycle: Recorded → In progress → Verified → Paid → Closed
+- [x] Budget change history with confirmation workflow
+- [x] Payment risk warnings for unverified stages
 
 ### Phase 7 — Reporting & Quick Commands
 
