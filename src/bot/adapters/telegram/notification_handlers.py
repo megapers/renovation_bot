@@ -281,9 +281,15 @@ async def deliver_notification(
                 if notification.notification_type == NotificationType.CHECKPOINT_REACHED:
                     reply_markup = checkpoint_keyboard(notification.stage_id)
 
+                # Weekly reports already contain HTML formatting
+                if notification.extra_data.get("is_html"):
+                    text = notification.body
+                else:
+                    text = f"🔔 <b>{notification.title}</b>\n\n{notification.body}"
+
                 await bot.send_message(
                     chat_id=user.telegram_id,
-                    text=f"🔔 <b>{notification.title}</b>\n\n{notification.body}",
+                    text=text,
                     parse_mode="HTML",
                     reply_markup=reply_markup,
                 )

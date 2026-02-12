@@ -1128,3 +1128,79 @@ async def update_stage_payment_status(
 
     logger.info("Stage id=%d payment status: %s → %s", stage_id, old_status, payment_status)
     return stage
+
+
+# ── Report & quick-command queries (Phase 7) ─────────────────
+
+
+async def get_current_in_progress_stage(
+    session: AsyncSession,
+    project_id: int,
+) -> Stage | None:
+    """
+    Get the first IN_PROGRESS stage for a project (by order).
+
+    Returns None if no stage is currently in progress.
+    """
+    result = await session.execute(
+        select(Stage)
+        .where(
+            Stage.project_id == project_id,
+            Stage.status == StageStatus.IN_PROGRESS,
+            Stage.is_parallel == False,  # noqa: E712
+        )
+        .order_by(Stage.order)
+        .limit(1)
+        .options(selectinload(Stage.sub_stages))
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_stages_for_user(
+    session: AsyncSession,
+    user_id: int,
+    project_id: int,
+) -> Sequence[Stage]:
+    """
+    Get stages assigned to a specific user in a project.
+
+    Matches by responsible_user_id.
+    """
+    result = await session.execute(
+        select(Stage)
+        .where(
+            Stage.project_id == project_id,
+            Stage.responsible_user_id == user_id,
+        )
+        .order_by(Stage.order)
+        .options(selectinload(Stage.sub_stages))
+    )
+    return result.scalars().all()
+
+
+async def get_project_full_report_data(
+    session: AsyncSession,
+    project_id: int,
+) -> dict:
+    """
+    Gather all data needed for a full project report in one call.
+
+    Returns:
+    {
+        "project": Project,
+        "stages": list[Stage],
+        "budget_summary": dict,
+        "category_summaries": list[dict],
+    }
+    """
+    project = await get_project_with_stages(session, project_id)
+    stages = list(await get_stages_for_project(session, project_id))
+    budget_summary = await get_project_budget_summary(session, project_id)
+    category_summaries = await get_budget_summary_by_category(session, project_id)
+
+    return {
+        "project": project,
+        "stages": stages,
+        "budget_summary": budget_summary,
+        "category_summaries": category_summaries,
+    }

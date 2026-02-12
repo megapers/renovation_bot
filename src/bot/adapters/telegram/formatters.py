@@ -361,3 +361,225 @@ def format_payment_stage_detail(stage) -> str:
         lines.append(risk)
 
     return "\n".join(lines)
+
+
+# ── Report formatting (Phase 7) ──────────────────────────────
+
+
+def format_weekly_report(report: dict) -> str:
+    """
+    Format a weekly project report with HTML markup.
+
+    Args:
+        report: dict from report_service.build_weekly_report
+    """
+    lines: list[str] = [
+        f"📊 <b>Еженедельный отчёт: «{report['project_name']}»</b>",
+        f"📅 {report['generated_at'].strftime('%d.%m.%Y %H:%M')}",
+        "",
+    ]
+
+    # Progress bar
+    ss = report["stages_summary"]
+    total = ss["total"]
+    completed = ss["completed"]
+    pct = (completed / total * 100) if total > 0 else 0
+    bar_filled = int(pct / 10)
+    bar = "▓" * bar_filled + "░" * (10 - bar_filled)
+    lines.append(f"Прогресс: [{bar}] {pct:.0f}%")
+    lines.append(
+        f"  ✅ {completed} | 🔨 {ss['in_progress']} | "
+        f"⚠️ {ss['delayed']} | 📋 {ss['planned']}"
+    )
+
+    # Current work
+    if report["current_stages"]:
+        lines.append("")
+        lines.append("<b>🔨 Текущие работы:</b>")
+        for s in report["current_stages"]:
+            lines.append(
+                f"  • {s['name']} — до {s['end_date']}"
+                f" ({s['responsible']})"
+            )
+
+    # Overdue
+    if report["overdue_stages"]:
+        lines.append("")
+        lines.append("<b>🚨 Просрочено:</b>")
+        for s in report["overdue_stages"]:
+            lines.append(
+                f"  • {s['name']} — просрочка {s['days_overdue']} дн."
+                f" ({s['responsible']})"
+            )
+
+    # Upcoming
+    if report["upcoming_stages"]:
+        lines.append("")
+        lines.append("<b>📅 Скоро начнутся:</b>")
+        for s in report["upcoming_stages"]:
+            lines.append(
+                f"  • {s['name']} — через {s['days_until']} дн. ({s['start_date']})"
+            )
+
+    # Budget
+    bi = report["budget_info"]
+    analysis = report["budget_analysis"]
+    lines.append("")
+    lines.append("<b>💰 Бюджет:</b>")
+    if analysis["has_budget"]:
+        status_icon = {"ok": "✅", "warning": "⚠️", "over": "🚨"}.get(
+            analysis["status"], ""
+        )
+        lines.append(f"  {status_icon} {analysis['message']}")
+    lines.append(
+        f"  Расходы: {bi['total_spent']:,.0f} ₸ "
+        f"(работа: {bi['total_work']:,.0f} + "
+        f"материалы: {bi['total_materials']:,.0f})"
+    )
+
+    # Category breakdown (compact)
+    if report["category_breakdown"]:
+        items = [
+            f"{c['label']}: {c['total']:,.0f}"
+            for c in report["category_breakdown"]
+        ]
+        lines.append(f"  По категориям: {' | '.join(items)}")
+
+    return "\n".join(lines)
+
+
+def format_status_report(report: dict) -> str:
+    """
+    Format a quick status report — all stages listing.
+
+    Args:
+        report: dict from report_service.build_status_report
+    """
+    lines: list[str] = [
+        f"📋 <b>Статус проекта «{report['project_name']}»</b>",
+        "",
+    ]
+
+    pct = report["progress_pct"]
+    bar_filled = int(pct / 10)
+    bar = "▓" * bar_filled + "░" * (10 - bar_filled)
+    lines.append(
+        f"Прогресс: [{bar}] {pct:.0f}% "
+        f"({report['completed']}/{report['total']})"
+    )
+    lines.append("")
+
+    main = [s for s in report["stages"] if not s["is_parallel"]]
+    parallel = [s for s in report["stages"] if s["is_parallel"]]
+
+    for s in main:
+        overdue_mark = " 🚨" if s["is_overdue"] else ""
+        lines.append(
+            f"{s['status']}  {s['order']}. {s['name']}{overdue_mark}"
+        )
+
+    if parallel:
+        lines.append("")
+        lines.append("<b>🪑 Параллельные:</b>")
+        for s in parallel:
+            overdue_mark = " 🚨" if s["is_overdue"] else ""
+            lines.append(f"  {s['status']}  {s['name']}{overdue_mark}")
+
+    return "\n".join(lines)
+
+
+def format_next_stage_info(info: dict) -> str:
+    """
+    Format next stage info with HTML markup.
+
+    Args:
+        info: dict from report_service.build_next_stage_info
+    """
+    lines: list[str] = [
+        f"⏭ <b>Следующий этап — «{info['project_name']}»</b>",
+        "",
+    ]
+
+    if info["current_stage"]:
+        c = info["current_stage"]
+        lines.append(
+            f"<b>Сейчас:</b> {c['name']} ({c['status']})\n"
+            f"  До: {c['end_date']} | Ответственный: {c['responsible']}"
+        )
+        lines.append("")
+
+    if info["next_stage"]:
+        n = info["next_stage"]
+        lines.append(f"<b>Далее:</b> {n['name']}")
+        lines.append(f"  📅 {n['start_date']} — {n['end_date']}")
+        lines.append(f"  👤 {n['responsible']}")
+        if n["budget"]:
+            lines.append(f"  💰 {n['budget']:,.0f} ₸")
+    else:
+        lines.append("Следующий этап не запланирован.")
+
+    return "\n".join(lines)
+
+
+def format_deadline_report(report: dict) -> str:
+    """
+    Format a deadline-focused report.
+
+    Args:
+        report: dict from report_service.build_deadline_report
+    """
+    lines: list[str] = [
+        f"⏰ <b>Дедлайны — «{report['project_name']}»</b>",
+        "",
+    ]
+
+    if report["overdue"]:
+        lines.append("<b>🚨 Просрочено:</b>")
+        for s in report["overdue"]:
+            lines.append(
+                f"  • {s['name']} — просрочен на {s['days_overdue']} дн. "
+                f"(был: {s['end_date']}, отв.: {s['responsible']})"
+            )
+        lines.append("")
+
+    if report["due_soon"]:
+        lines.append("<b>⚠️ Скоро истекает (≤3 дня):</b>")
+        for s in report["due_soon"]:
+            lines.append(
+                f"  • {s['name']} — через {s['days_left']} дн. "
+                f"(до {s['end_date']}, отв.: {s['responsible']})"
+            )
+        lines.append("")
+
+    if report["on_track"]:
+        lines.append("<b>✅ В работе, в срок:</b>")
+        for s in report["on_track"]:
+            lines.append(
+                f"  • {s['name']} — ещё {s['days_left']} дн. (до {s['end_date']})"
+            )
+
+    if not report["overdue"] and not report["due_soon"]:
+        lines.append("✅ Нет просроченных этапов!")
+
+    return "\n".join(lines)
+
+
+def format_my_stages(stages_info: list[dict], project_name: str) -> str:
+    """Format stages assigned to the current user."""
+    lines: list[str] = [
+        f"👤 <b>Мои этапы — «{project_name}»</b>",
+        "",
+    ]
+
+    if not stages_info:
+        lines.append("У вас нет назначенных этапов.")
+        return "\n".join(lines)
+
+    for s in stages_info:
+        overdue_mark = " 🚨" if s.get("is_overdue") else ""
+        lines.append(
+            f"{s['status']}  {s['name']}{overdue_mark}\n"
+            f"  📅 {s['start_date']} — {s['end_date']}"
+        )
+
+    return "\n".join(lines)

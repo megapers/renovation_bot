@@ -21,6 +21,7 @@ from bot.adapters.telegram.notification_handlers import (
     router as notification_router,
 )
 from bot.adapters.telegram.project_handlers import router as project_router
+from bot.adapters.telegram.report_handlers import router as report_router
 from bot.adapters.telegram.role_handlers import router as role_router
 from bot.adapters.telegram.stage_handlers import router as stage_router
 from bot.config import settings
@@ -55,6 +56,7 @@ class TelegramAdapter(PlatformAdapter):
         self.dp.include_router(notification_router)    # checkpoint approval, status changes
         self.dp.include_router(role_router)            # /team, /invite, /myrole
         self.dp.include_router(budget_router)          # /budget, /expenses
+        self.dp.include_router(report_router)          # /report, /status, quick commands (LAST — has catch-all)
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""

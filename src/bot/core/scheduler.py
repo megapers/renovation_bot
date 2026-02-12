@@ -25,6 +25,7 @@ from bot.core.notification_service import (
     build_furniture_order_reminder,
     build_overspending_alert,
     build_status_update_request,
+    build_weekly_report_notification,
 )
 from bot.db import repositories as repo
 from bot.db.models import RoleType, StageStatus
@@ -224,6 +225,65 @@ async def _check_overspending() -> None:
         logger.exception("Error in overspending check job")
 
 
+async def _send_weekly_reports() -> None:
+    """Generate and send weekly reports to project owners."""
+    if not _send_notification:
+        return
+
+    try:
+        from bot.adapters.telegram.formatters import format_weekly_report
+        from bot.core.report_service import build_weekly_report
+
+        async with get_session() as session:
+            projects = await repo.get_all_active_projects(session)
+            reports_sent = 0
+
+            for project in projects:
+                owner_ids = await repo.get_project_owner_ids(session, project.id)
+                if not owner_ids:
+                    continue
+
+                stages = list(
+                    await repo.get_stages_for_project(session, project.id)
+                )
+                budget_summary = await repo.get_project_budget_summary(
+                    session, project.id
+                )
+                cat_summaries = await repo.get_budget_summary_by_category(
+                    session, project.id
+                )
+
+                total_budget = (
+                    float(project.total_budget)
+                    if project.total_budget
+                    else None
+                )
+
+                report_data = await build_weekly_report(
+                    project_id=project.id,
+                    project_name=project.name,
+                    total_budget=total_budget,
+                    stages=stages,
+                    budget_summary=budget_summary,
+                    category_summaries=cat_summaries,
+                )
+
+                report_text = format_weekly_report(report_data)
+
+                notification = build_weekly_report_notification(
+                    project_id=project.id,
+                    project_name=project.name,
+                    report_text=report_text,
+                    owner_ids=owner_ids,
+                )
+                await _send_notification(notification)
+                reports_sent += 1
+
+            logger.info("Weekly reports sent: %d", reports_sent)
+    except Exception:
+        logger.exception("Error in weekly report job")
+
+
 def start_scheduler(send_notification: NotificationSender) -> AsyncIOScheduler:
     """
     Create and start the background scheduler.
@@ -286,6 +346,18 @@ def start_scheduler(send_notification: NotificationSender) -> AsyncIOScheduler:
         hours=4,
         id="check_overspending",
         name="Check budget overspending",
+        replace_existing=True,
+    )
+
+    # Weekly reports — every Monday at 09:00
+    _scheduler.add_job(
+        _send_weekly_reports,
+        "cron",
+        day_of_week="mon",
+        hour=9,
+        minute=0,
+        id="send_weekly_reports",
+        name="Send weekly reports to owners",
         replace_existing=True,
     )
 

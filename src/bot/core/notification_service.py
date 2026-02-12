@@ -41,6 +41,9 @@ class NotificationType(str, enum.Enum):
     OVERSPENDING_ALERT = "overspending_alert"           # Stage or total budget exceeded
     BUDGET_WARNING = "budget_warning"                   # Approaching budget limit (90%+)
 
+    # Reports
+    WEEKLY_REPORT = "weekly_report"                     # Automated weekly report to owners
+
 
 @dataclass
 class Notification:
@@ -289,6 +292,24 @@ def build_budget_warning(
 
 # ── Role-based recipient resolution ─────────────────────────
 
+def build_weekly_report_notification(
+    project_id: int,
+    project_name: str,
+    report_text: str,
+    owner_ids: list[int],
+) -> Notification:
+    """Build a weekly report notification for project owners."""
+    return Notification(
+        notification_type=NotificationType.WEEKLY_REPORT,
+        project_id=project_id,
+        project_name=project_name,
+        title=f"Еженедельный отчёт: {project_name}",
+        body=report_text,
+        recipient_user_ids=owner_ids,
+        extra_data={"is_html": True},
+    )
+
+
 # Which roles receive which notification types
 NOTIFICATION_RECIPIENTS: dict[NotificationType, list[RoleType]] = {
     NotificationType.DEADLINE_APPROACHING: [
@@ -320,6 +341,9 @@ NOTIFICATION_RECIPIENTS: dict[NotificationType, list[RoleType]] = {
         RoleType.OWNER, RoleType.CO_OWNER,
     ],
     NotificationType.BUDGET_WARNING: [
+        RoleType.OWNER, RoleType.CO_OWNER,
+    ],
+    NotificationType.WEEKLY_REPORT: [
         RoleType.OWNER, RoleType.CO_OWNER,
     ],
 }

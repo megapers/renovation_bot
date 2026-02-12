@@ -384,9 +384,9 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 7 — Reporting & Quick Commands
 
-- [ ] Weekly automated report to client
-- [ ] On-demand reports via quick commands
-- [ ] Implement all quick commands: `budget`, `stages`, `expenses`, `report`, `next stage`, `my stage`, `status`, `deadline`, `send photo`, `expert`
+- [x] Weekly automated report to client
+- [x] On-demand reports via quick commands
+- [x] Implement all quick commands: `budget`, `stages`, `expenses`, `report`, `next stage`, `my stage`, `status`, `deadline`, `send photo`, `expert`
 
 ### Phase 8 — AI Text Processing & Media Understanding
 
