@@ -67,5 +67,9 @@ async def handle_start(message: Message) -> None:
         "<b>Команды:</b>\n"
         "/newproject — создать новый проект\n"
         "/stages — управление этапами\n"
-        "/launch — запустить проект"
+        "/launch — запустить проект\n"
+        "/team — команда проекта\n"
+        "/invite — пригласить участника\n"
+        "/myrole — моя роль в проекте\n"
+        "/link — привязать группу к проекту"
     )

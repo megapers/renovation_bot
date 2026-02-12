@@ -61,3 +61,21 @@ class StageSetup(StatesGroup):
 
     # Launch
     confirming_launch = State()        # Final project launch confirmation
+
+
+class RoleManagement(StatesGroup):
+    """
+    States for inviting and managing team members.
+
+    Accessed via /invite command.
+
+    FSM data keys used:
+      project_id    — target project
+      invite_role   — RoleType being assigned
+      target_user_id — user being invited (if resolved)
+    """
+
+    selecting_project = State()        # Pick project (if user has multiple)
+    choosing_role = State()            # Select which role to assign
+    entering_contact = State()         # Enter @username or forward a message
+    confirming_invite = State()        # Confirm the invitation

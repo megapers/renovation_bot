@@ -290,3 +290,55 @@ def back_to_stage_keyboard(stage_id: int) -> InlineKeyboardMarkup:
             ),
         ],
     ])
+
+
+# ── Role management keyboards (Phase 4) ───────────────────────
+
+
+def role_select_keyboard() -> InlineKeyboardMarkup:
+    """Select a role to assign to a new team member."""
+    from bot.core.role_service import ASSIGNABLE_ROLES, ROLE_LABELS
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for role in ASSIGNABLE_ROLES:
+        rows.append([
+            InlineKeyboardButton(
+                text=ROLE_LABELS.get(role, role.value),
+                callback_data=f"role:{role.value}",
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(text="❌ Отмена", callback_data="role:cancel"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def invite_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirm or cancel an invitation."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Пригласить",
+                callback_data="inv:yes",
+            ),
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="inv:cancel",
+            ),
+        ],
+    ])
+
+
+def team_member_keyboard(
+    user_id: int,
+    project_id: int,
+) -> InlineKeyboardMarkup:
+    """Actions for a team member (for the owner)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🗑 Удалить из проекта",
+                callback_data=f"tmrm:{project_id}:{user_id}",
+            ),
+        ],
+    ])

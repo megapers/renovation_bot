@@ -256,3 +256,153 @@ async def launch_project(
         logger.info("Launched project_id=%d, first stage '%s' → IN_PROGRESS",
                      project_id, first_stage.name)
     return first_stage
+
+
+# ── Role & team management (Phase 4) ────────────────────────
+
+
+async def get_user_roles_in_project(
+    session: AsyncSession,
+    user_id: int,
+    project_id: int,
+) -> list[RoleType]:
+    """Get all roles a user has in a specific project."""
+    result = await session.execute(
+        select(ProjectRole.role)
+        .where(
+            ProjectRole.user_id == user_id,
+            ProjectRole.project_id == project_id,
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_project_by_telegram_chat_id(
+    session: AsyncSession,
+    chat_id: int,
+) -> Project | None:
+    """Find a project linked to a Telegram group chat."""
+    result = await session.execute(
+        select(Project).where(Project.telegram_chat_id == chat_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_project_team(
+    session: AsyncSession,
+    project_id: int,
+) -> list[tuple[User, list[RoleType]]]:
+    """
+    Get all team members for a project, grouped by user.
+
+    Returns list of (User, [RoleType, ...]) tuples.
+    """
+    result = await session.execute(
+        select(ProjectRole)
+        .where(ProjectRole.project_id == project_id)
+        .options(selectinload(ProjectRole.user))
+        .order_by(ProjectRole.role)
+    )
+    roles = result.scalars().all()
+
+    # Group roles by user
+    user_roles: dict[int, tuple[User, list[RoleType]]] = {}
+    for pr in roles:
+        if pr.user_id not in user_roles:
+            user_roles[pr.user_id] = (pr.user, [])
+        user_roles[pr.user_id][1].append(pr.role)
+
+    return list(user_roles.values())
+
+
+async def get_or_create_user_by_telegram_id(
+    session: AsyncSession,
+    telegram_id: int,
+    full_name: str = "Unknown",
+) -> tuple[User, bool]:
+    """
+    Find or create a user by Telegram ID.
+
+    Returns (user, created) where created is True if user was newly created.
+    """
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user:
+        return user, False
+
+    user = User(
+        telegram_id=telegram_id,
+        full_name=full_name,
+        is_bot_started=False,
+    )
+    session.add(user)
+    await session.flush()
+    logger.info("Created placeholder user: %s (tg_id=%d)", full_name, telegram_id)
+    return user, True
+
+
+async def has_role_in_project(
+    session: AsyncSession,
+    user_id: int,
+    project_id: int,
+    role: RoleType | None = None,
+) -> bool:
+    """
+    Check if a user has any role (or a specific role) in a project.
+
+    If role is None, checks for any role.
+    """
+    query = select(ProjectRole.id).where(
+        ProjectRole.user_id == user_id,
+        ProjectRole.project_id == project_id,
+    )
+    if role is not None:
+        query = query.where(ProjectRole.role == role)
+    result = await session.execute(query.limit(1))
+    return result.scalar_one_or_none() is not None
+
+
+async def remove_role(
+    session: AsyncSession,
+    user_id: int,
+    project_id: int,
+    role: RoleType,
+) -> bool:
+    """
+    Remove a specific role from a user in a project.
+
+    Returns True if a role was actually removed.
+    """
+    result = await session.execute(
+        select(ProjectRole).where(
+            ProjectRole.user_id == user_id,
+            ProjectRole.project_id == project_id,
+            ProjectRole.role == role,
+        )
+    )
+    pr = result.scalar_one_or_none()
+    if pr is None:
+        return False
+    await session.delete(pr)
+    await session.flush()
+    logger.info("Removed role %s from user_id=%d in project_id=%d",
+                role.value, user_id, project_id)
+    return True
+
+
+async def link_project_to_chat(
+    session: AsyncSession,
+    project_id: int,
+    telegram_chat_id: int,
+) -> Project | None:
+    """Link a project to a Telegram group chat."""
+    result = await session.execute(
+        select(Project).where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        return None
+    project.telegram_chat_id = telegram_chat_id
+    await session.flush()
+    logger.info("Linked project_id=%d to telegram_chat_id=%d",
+                project_id, telegram_chat_id)
+    return project
