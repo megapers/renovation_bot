@@ -353,11 +353,11 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 3 — Deadline & Assignment Management
 
-- [ ] Implement deadline assignment per stage (duration or exact dates)
-- [ ] Assign responsible person per stage
-- [ ] Set budget per stage
-- [ ] Sub-stage creation within stages
-- [ ] Project launch summary and confirmation
+- [x] Implement deadline assignment per stage (duration or exact dates)
+- [x] Assign responsible person per stage
+- [x] Set budget per stage
+- [x] Sub-stage creation within stages
+- [x] Project launch summary and confirmation
 
 ### Phase 4 — Roles & Permissions
 

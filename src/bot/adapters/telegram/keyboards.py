@@ -1,9 +1,12 @@
 """
-Telegram inline keyboard builders for the project creation flow.
+Telegram inline keyboard builders for the project creation flow
+and stage management.
 
 These helpers produce aiogram InlineKeyboardMarkup objects.
 They are Telegram-specific and belong in the adapter layer.
 """
+
+from typing import Sequence
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -95,5 +98,195 @@ def skip_keyboard(prefix: str = "skip") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"{prefix}:skip"),
+        ],
+    ])
+
+
+# ── Stage management keyboards (Phase 3) ──────────────────────
+
+
+_STATUS_ICONS: dict[str, str] = {
+    "planned": "📋",
+    "in_progress": "🔨",
+    "completed": "✅",
+    "delayed": "⚠️",
+}
+
+
+def _stage_indicators(stage: object) -> str:
+    """Build tiny indicator string showing which fields are set."""
+    parts: list[str] = []
+    if getattr(stage, "start_date", None):
+        parts.append("📅")
+    if getattr(stage, "responsible_contact", None):
+        parts.append("👤")
+    if getattr(stage, "budget", None):
+        parts.append("💰")
+    return " " + "".join(parts) if parts else ""
+
+
+def project_select_keyboard(
+    projects: Sequence,
+) -> InlineKeyboardMarkup:
+    """Show a list of projects for the user to select."""
+    rows = [
+        [InlineKeyboardButton(
+            text=f"🏠 {p.name}",
+            callback_data=f"prjsel:{p.id}",
+        )]
+        for p in projects
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def stages_list_keyboard(
+    stages: Sequence,
+    show_launch: bool = True,
+) -> InlineKeyboardMarkup:
+    """
+    Stage list as inline buttons with status icons and indicators.
+
+    Each button shows: icon + order + name + indicators (📅👤💰).
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    main_stages = [s for s in stages if not s.is_parallel]
+    parallel_stages = [s for s in stages if s.is_parallel]
+
+    for stage in main_stages:
+        icon = _STATUS_ICONS.get(stage.status.value, "📋")
+        info = _stage_indicators(stage)
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{icon} {stage.order}. {stage.name}{info}",
+                callback_data=f"stg:{stage.id}",
+            )
+        ])
+
+    if parallel_stages:
+        for stage in parallel_stages:
+            icon = _STATUS_ICONS.get(stage.status.value, "📋")
+            info = _stage_indicators(stage)
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"{icon} • {stage.name}{info}",
+                    callback_data=f"stg:{stage.id}",
+                )
+            ])
+
+    if show_launch:
+        rows.append([
+            InlineKeyboardButton(
+                text="🚀 Запустить проект",
+                callback_data="launch",
+            ),
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def stage_actions_keyboard(stage_id: int) -> InlineKeyboardMarkup:
+    """Action buttons for a single stage."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📅 Сроки", callback_data=f"stgdt:{stage_id}"),
+            InlineKeyboardButton(text="👤 Ответственный", callback_data=f"stgprs:{stage_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="💰 Бюджет", callback_data=f"stgbdg:{stage_id}"),
+            InlineKeyboardButton(text="📝 Подзадачи", callback_data=f"stgsub:{stage_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="↩️ К списку этапов", callback_data="stgback"),
+        ],
+    ])
+
+
+def date_method_keyboard(stage_id: int) -> InlineKeyboardMarkup:
+    """Choose how to enter dates: duration or exact dates."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⏱ Длительность (дни)",
+                callback_data=f"stgdur:{stage_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📅 Точные даты",
+                callback_data=f"stgex:{stage_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="↩️ Назад",
+                callback_data=f"stg:{stage_id}",
+            ),
+        ],
+    ])
+
+
+def substages_keyboard(
+    stage_id: int,
+    sub_stages: Sequence,
+) -> InlineKeyboardMarkup:
+    """Show existing sub-stages and an 'Add' button."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for sub in sub_stages:
+        icon = _STATUS_ICONS.get(sub.status.value, "📋")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{icon} {sub.order}. {sub.name}",
+                callback_data=f"substg:{sub.id}",  # for future detail view
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text="➕ Добавить подзадачи",
+            callback_data=f"stgsuba:{stage_id}",
+        ),
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text="↩️ Назад",
+            callback_data=f"stg:{stage_id}",
+        ),
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def launch_keyboard(is_ready: bool = True) -> InlineKeyboardMarkup:
+    """Launch confirmation buttons."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if is_ready:
+        rows.append([
+            InlineKeyboardButton(
+                text="🚀 Запустить",
+                callback_data="launch_yes",
+            ),
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text="↩️ К этапам",
+            callback_data="stgback",
+        ),
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def back_to_stage_keyboard(stage_id: int) -> InlineKeyboardMarkup:
+    """Simple back button to return to stage detail."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="↩️ Назад к этапу",
+                callback_data=f"stg:{stage_id}",
+            ),
         ],
     ])

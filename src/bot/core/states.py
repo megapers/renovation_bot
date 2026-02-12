@@ -28,3 +28,36 @@ class ProjectCreation(StatesGroup):
     waiting_for_custom_items = State()  # Step 8: Custom furniture? (multi-select)
     reviewing_stages = State()          # Step 9: Review/edit auto-generated stages
     confirming = State()                # Step 10: Final confirmation
+
+
+class StageSetup(StatesGroup):
+    """
+    States for stage configuration: deadlines, assignments, budgets,
+    sub-stages, and project launch.
+
+    Accessed via /stages and /launch commands.
+
+    FSM data keys used:
+      project_id  — current project being configured
+      stage_id    — stage currently being edited
+      date_mode   — "duration" | "exact" (how dates are entered)
+    """
+
+    selecting_project = State()        # Pick project (if user has multiple)
+    viewing_stages = State()           # Browsing the stage list
+    viewing_stage_detail = State()     # Viewing one stage's details
+
+    # Date entry
+    setting_start_date = State()       # Entering start date (DD.MM.YYYY)
+    setting_end_date = State()         # Entering end date (DD.MM.YYYY)
+    setting_duration = State()         # Entering duration in days
+
+    # Person & budget
+    assigning_person = State()         # Entering responsible person name/contact
+    setting_stage_budget = State()     # Entering budget amount for stage
+
+    # Sub-stages
+    adding_sub_stages = State()        # Entering sub-stage names (one per line)
+
+    # Launch
+    confirming_launch = State()        # Final project launch confirmation

@@ -164,6 +164,7 @@ class Stage(Base):
     start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    responsible_contact: Mapped[str | None] = mapped_column(String(255))
     is_parallel: Mapped[bool] = mapped_column(Boolean, default=False)
     is_checkpoint: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -191,6 +192,7 @@ class SubStage(Base):
     start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    responsible_contact: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
