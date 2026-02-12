@@ -132,16 +132,17 @@ async def search_similar(
 
     # pgvector cosine distance operator: <=>
     # similarity = 1 - cosine_distance
+    # Use CAST() instead of :: to avoid asyncpg parameter parsing conflict
     sql = text("""
         SELECT
             id,
             content,
             metadata AS metadata_,
-            1 - (embedding <=> :query_vec::vector) AS similarity
+            1 - (embedding <=> CAST(:query_vec AS vector)) AS similarity
         FROM embeddings
         WHERE project_id = :project_id
-          AND 1 - (embedding <=> :query_vec::vector) >= :min_sim
-        ORDER BY embedding <=> :query_vec::vector
+          AND 1 - (embedding <=> CAST(:query_vec AS vector)) >= :min_sim
+        ORDER BY embedding <=> CAST(:query_vec AS vector)
         LIMIT :top_k
     """)
 

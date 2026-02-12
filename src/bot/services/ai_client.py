@@ -1,50 +1,142 @@
 """
-Azure OpenAI client service — centralized AI access.
+Multi-provider AI client service — centralized LLM access.
+
+Supports three provider types (controlled by AI_PROVIDER env var):
+  - "azure"             — Azure OpenAI (Entra ID or API key)
+  - "openai"            — Standard OpenAI API
+  - "openai_compatible" — Any OpenAI-compatible API (Kimi K2.5, DeepSeek, Groq, etc.)
 
 Provides async methods for:
-  - Chat completions (GPT-4o)
-  - Text embeddings (text-embedding-3-small)
+  - Chat completions
+  - Text embeddings
   - Voice transcription (Whisper)
-  - Image understanding (GPT-4 Vision)
+  - Image understanding (Vision)
 
-All Azure OpenAI interactions go through this module.
+All AI interactions go through this module.
 Platform-specific code never calls the openai SDK directly.
 """
 
 import logging
 from typing import Any
 
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from bot.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Module-level client (lazy-initialized)
-_client: AsyncAzureOpenAI | None = None
+_client: AsyncOpenAI | AsyncAzureOpenAI | None = None
 
 
-def _get_client() -> AsyncAzureOpenAI:
-    """Get or create the async Azure OpenAI client."""
+def _get_client() -> AsyncOpenAI | AsyncAzureOpenAI:
+    """
+    Get or create the async OpenAI-compatible client.
+
+    Provider selection (AI_PROVIDER):
+      "azure"             → AsyncAzureOpenAI (Entra ID if no API key, else key auth)
+      "openai"            → AsyncOpenAI (standard OpenAI)
+      "openai_compatible" → AsyncOpenAI with custom base_url (Kimi, DeepSeek, etc.)
+    """
     global _client
-    if _client is None:
-        if not settings.azure_openai_api_key or not settings.azure_openai_endpoint:
+    if _client is not None:
+        return _client
+
+    provider = settings.ai_provider
+
+    if provider == "azure":
+        if not settings.azure_openai_endpoint:
             raise RuntimeError(
                 "Azure OpenAI is not configured. "
-                "Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT in .env"
+                "Set AZURE_OPENAI_ENDPOINT in .env"
             )
-        _client = AsyncAzureOpenAI(
-            api_key=settings.azure_openai_api_key,
-            azure_endpoint=settings.azure_openai_endpoint,
-            api_version=settings.azure_openai_api_version,
+
+        if settings.azure_openai_api_key:
+            # Azure — API key authentication
+            _client = AsyncAzureOpenAI(
+                api_key=settings.azure_openai_api_key,
+                azure_endpoint=settings.azure_openai_endpoint,
+                api_version=settings.azure_openai_api_version,
+            )
+            logger.info(
+                "AI client: Azure OpenAI with API key (endpoint=%s)",
+                settings.azure_openai_endpoint,
+            )
+        else:
+            # Azure — Microsoft Entra ID (DefaultAzureCredential)
+            try:
+                from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            except ImportError:
+                raise RuntimeError(
+                    "azure-identity is required for Entra ID auth. "
+                    "Install it: pip install azure-identity"
+                )
+
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                credential,
+                "https://cognitiveservices.azure.com/.default",
+            )
+            _client = AsyncAzureOpenAI(
+                azure_ad_token_provider=token_provider,
+                azure_endpoint=settings.azure_openai_endpoint,
+                api_version=settings.azure_openai_api_version,
+            )
+            logger.info(
+                "AI client: Azure OpenAI with Entra ID (endpoint=%s)",
+                settings.azure_openai_endpoint,
+            )
+
+    elif provider == "openai":
+        if not settings.ai_api_key:
+            raise RuntimeError(
+                "OpenAI API key is not set. Set AI_API_KEY in .env"
+            )
+        _client = AsyncOpenAI(api_key=settings.ai_api_key)
+        logger.info("AI client: OpenAI (standard)")
+
+    elif provider == "openai_compatible":
+        if not settings.ai_api_key:
+            raise RuntimeError(
+                "API key is not set. Set AI_API_KEY in .env"
+            )
+        if not settings.ai_base_url:
+            raise RuntimeError(
+                "Base URL is not set. Set AI_BASE_URL in .env "
+                "(e.g. https://api.moonshot.cn/v1)"
+            )
+        _client = AsyncOpenAI(
+            api_key=settings.ai_api_key,
+            base_url=settings.ai_base_url,
         )
-        logger.info("Azure OpenAI client initialized (endpoint=%s)", settings.azure_openai_endpoint)
+        logger.info(
+            "AI client: OpenAI-compatible (base_url=%s)",
+            settings.ai_base_url,
+        )
+
+    else:
+        raise RuntimeError(f"Unknown AI_PROVIDER: {provider!r}")
+
     return _client
 
 
+def reset_client() -> None:
+    """Reset the cached client (useful when switching providers at runtime/tests)."""
+    global _client
+    _client = None
+
+
 def is_ai_configured() -> bool:
-    """Check if Azure OpenAI credentials are configured."""
-    return bool(settings.azure_openai_api_key and settings.azure_openai_endpoint)
+    """Check if AI provider credentials are configured."""
+    provider = settings.ai_provider
+    if provider == "azure":
+        # Entra ID needs only the endpoint; API key auth needs both
+        return bool(settings.azure_openai_endpoint)
+    if provider == "openai":
+        return bool(settings.ai_api_key)
+    if provider == "openai_compatible":
+        return bool(settings.ai_api_key and settings.ai_base_url)
+    return False
 
 
 # ── Chat Completions ─────────────────────────────────────────
@@ -58,7 +150,7 @@ async def chat_completion(
     response_format: dict | None = None,
 ) -> str:
     """
-    Send a chat completion request to Azure OpenAI.
+    Send a chat completion request.
 
     Args:
         messages: list of {"role": "system"|"user"|"assistant", "content": ...}
@@ -70,24 +162,56 @@ async def chat_completion(
         The assistant's response text.
     """
     client = _get_client()
-    deployment = settings.azure_openai_chat_deployment
-    if not deployment:
-        raise RuntimeError("AZURE_OPENAI_CHAT_DEPLOYMENT is not set")
+    model = settings.effective_chat_model
+    if not model:
+        raise RuntimeError(
+            "Chat model is not set. "
+            "Set AZURE_OPENAI_CHAT_DEPLOYMENT (azure) or AI_CHAT_MODEL (openai/compatible)"
+        )
 
     kwargs: dict[str, Any] = {
-        "model": deployment,
+        "model": model,
         "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
     }
+
+    # Token limit parameter: some models use max_completion_tokens, others max_tokens
+    # Try max_completion_tokens first (newer models), fall back to max_tokens
+    kwargs["max_completion_tokens"] = max_tokens
+
+    # Only send temperature if non-default (some models like GPT-5.x only support default=1)
+    if temperature != 1.0:
+        kwargs["temperature"] = temperature
     if response_format:
         kwargs["response_format"] = response_format
 
-    response = await client.chat.completions.create(**kwargs)
+    try:
+        response = await client.chat.completions.create(**kwargs)
+    except Exception as e:
+        err_msg = str(e).lower()
+        retry_kwargs = dict(kwargs)
+        changed = False
+
+        # Retry with max_tokens if max_completion_tokens is not supported
+        if "max_completion_tokens" in err_msg and "max_completion_tokens" in retry_kwargs:
+            retry_kwargs.pop("max_completion_tokens")
+            retry_kwargs["max_tokens"] = max_tokens
+            changed = True
+
+        # Retry without temperature if model doesn't support it
+        if "temperature" in err_msg and "temperature" in retry_kwargs:
+            retry_kwargs.pop("temperature")
+            changed = True
+
+        if changed:
+            response = await client.chat.completions.create(**retry_kwargs)
+        else:
+            raise
+
     content = response.choices[0].message.content or ""
 
     logger.debug(
-        "Chat completion: %d messages → %d tokens used",
+        "Chat completion [%s]: %d messages → %d tokens used",
+        model,
         len(messages),
         response.usage.total_tokens if response.usage else 0,
     )
@@ -101,7 +225,7 @@ async def chat_completion_with_vision(
     max_tokens: int = 1000,
 ) -> str:
     """
-    Send a chat completion with image(s) to GPT-4 Vision.
+    Send a chat completion with image(s) (Vision).
 
     Messages should include content blocks with type "image_url".
     Example message:
@@ -127,29 +251,49 @@ async def generate_embedding(text: str) -> list[float]:
     """
     Generate a vector embedding for a single text.
 
-    Uses text-embedding-3-small (1536 dimensions).
+    Output dimensions controlled by AI_EMBEDDING_DIMENSIONS.
+    Models that support Matryoshka truncation (text-embedding-3-*)
+    truncate server-side via the dimensions parameter.
 
     Returns:
-        List of floats (1536-dim vector).
+        List of floats (dimension count matches settings).
     """
     client = _get_client()
-    deployment = settings.azure_openai_embedding_deployment
-    if not deployment:
-        raise RuntimeError("AZURE_OPENAI_EMBEDDING_DEPLOYMENT is not set")
+    model = settings.effective_embedding_model
+    if not model:
+        raise RuntimeError(
+            "Embedding model is not set. "
+            "Set AZURE_OPENAI_EMBEDDING_DEPLOYMENT (azure) or AI_EMBEDDING_MODEL (openai/compat)"
+        )
 
-    # Truncate very long texts (embedding model has token limits)
-    max_chars = 8000  # ~2000 tokens — safe for text-embedding-3-small
+    # Truncate very long texts (embedding models have token limits)
+    max_chars = 8000  # ~2000 tokens
     if len(text) > max_chars:
         text = text[:max_chars]
 
-    response = await client.embeddings.create(
-        model=deployment,
-        input=text,
-    )
+    embed_kwargs: dict[str, Any] = {
+        "model": model,
+        "input": text,
+    }
+    # Only send dimensions if configured (not all providers support it)
+    if settings.ai_embedding_dimensions:
+        embed_kwargs["dimensions"] = settings.ai_embedding_dimensions
+
+    try:
+        response = await client.embeddings.create(**embed_kwargs)
+    except Exception as e:
+        # Retry without dimensions if provider doesn't support truncation
+        if "dimensions" in str(e).lower() and "dimensions" in embed_kwargs:
+            embed_kwargs.pop("dimensions")
+            response = await client.embeddings.create(**embed_kwargs)
+        else:
+            raise
+
     vector = response.data[0].embedding
 
     logger.debug(
-        "Embedding generated: %d chars → %d dims, %d tokens",
+        "Embedding [%s]: %d chars → %d dims, %d tokens",
+        model,
         len(text),
         len(vector),
         response.usage.total_tokens if response.usage else 0,
@@ -167,24 +311,39 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
         List of embedding vectors (same order as input texts).
     """
     client = _get_client()
-    deployment = settings.azure_openai_embedding_deployment
-    if not deployment:
-        raise RuntimeError("AZURE_OPENAI_EMBEDDING_DEPLOYMENT is not set")
+    model = settings.effective_embedding_model
+    if not model:
+        raise RuntimeError(
+            "Embedding model is not set. "
+            "Set AZURE_OPENAI_EMBEDDING_DEPLOYMENT (azure) or AI_EMBEDDING_MODEL (openai/compat)"
+        )
 
     max_chars = 8000
     truncated = [t[:max_chars] if len(t) > max_chars else t for t in texts]
 
-    response = await client.embeddings.create(
-        model=deployment,
-        input=truncated,
-    )
+    embed_kwargs: dict[str, Any] = {
+        "model": model,
+        "input": truncated,
+    }
+    if settings.ai_embedding_dimensions:
+        embed_kwargs["dimensions"] = settings.ai_embedding_dimensions
+
+    try:
+        response = await client.embeddings.create(**embed_kwargs)
+    except Exception as e:
+        if "dimensions" in str(e).lower() and "dimensions" in embed_kwargs:
+            embed_kwargs.pop("dimensions")
+            response = await client.embeddings.create(**embed_kwargs)
+        else:
+            raise
 
     # Sort by index to ensure order matches input
     sorted_data = sorted(response.data, key=lambda x: x.index)
     vectors = [item.embedding for item in sorted_data]
 
     logger.debug(
-        "Batch embeddings: %d texts → %d vectors, %d tokens",
+        "Batch embeddings [%s]: %d texts → %d vectors, %d tokens",
+        model,
         len(texts),
         len(vectors),
         response.usage.total_tokens if response.usage else 0,
@@ -201,29 +360,27 @@ async def transcribe_audio(
     language: str = "ru",
 ) -> str:
     """
-    Transcribe audio using Azure OpenAI Whisper.
+    Transcribe audio using Whisper (or compatible STT model).
 
     Args:
         audio_bytes: raw audio file bytes
-        filename: filename with extension (helps Whisper detect format)
+        filename: filename with extension (helps detect format)
         language: ISO 639-1 language code
 
     Returns:
         Transcribed text.
     """
     client = _get_client()
-    # Whisper uses the same deployment or a dedicated whisper deployment
-    # For Azure OpenAI, whisper is typically deployed as a separate model
-    deployment = getattr(settings, "azure_openai_whisper_deployment", "") or "whisper"
+    model = settings.effective_whisper_model
 
     response = await client.audio.transcriptions.create(
-        model=deployment,
+        model=model,
         file=(filename, audio_bytes),
         language=language,
     )
 
     text = response.text.strip()
-    logger.debug("Whisper transcription: %s → %d chars", filename, len(text))
+    logger.debug("Whisper [%s]: %s → %d chars", model, filename, len(text))
     return text
 
 
@@ -236,7 +393,7 @@ async def describe_image(
     mime_type: str = "image/jpeg",
 ) -> str:
     """
-    Generate a text description of an image using GPT-4 Vision.
+    Generate a text description of an image using Vision model.
 
     Args:
         image_bytes: raw image bytes
