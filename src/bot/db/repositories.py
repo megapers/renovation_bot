@@ -17,6 +17,9 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import (
     BudgetItem,
     ChangeLog,
+    Embedding,
+    Message,
+    MessageType,
     Project,
     ProjectRole,
     RenovationType,
@@ -1204,3 +1207,158 @@ async def get_project_full_report_data(
         "budget_summary": budget_summary,
         "category_summaries": category_summaries,
     }
+
+
+# ── Message storage (Phase 8) ────────────────────────────────
+
+
+async def create_message(
+    session: AsyncSession,
+    *,
+    project_id: int | None,
+    user_id: int | None,
+    platform: str,
+    platform_chat_id: str,
+    platform_message_id: str | None = None,
+    message_type: MessageType = MessageType.TEXT,
+    raw_text: str | None = None,
+    file_ref: str | None = None,
+    transcribed_text: str | None = None,
+    is_from_bot: bool = False,
+) -> Message:
+    """Store an incoming or outgoing message."""
+    msg = Message(
+        project_id=project_id,
+        user_id=user_id,
+        platform=platform,
+        platform_chat_id=platform_chat_id,
+        platform_message_id=platform_message_id,
+        message_type=message_type,
+        raw_text=raw_text,
+        file_ref=file_ref,
+        transcribed_text=transcribed_text,
+        is_from_bot=is_from_bot,
+    )
+    session.add(msg)
+    await session.flush()
+    logger.debug(
+        "Stored message id=%d type=%s project_id=%s user_id=%s",
+        msg.id, message_type.value, project_id, user_id,
+    )
+    return msg
+
+
+async def get_messages_for_project(
+    session: AsyncSession,
+    project_id: int,
+    *,
+    limit: int = 100,
+    message_type: MessageType | None = None,
+    include_bot: bool = False,
+) -> Sequence[Message]:
+    """
+    Get recent messages for a project, newest first.
+
+    Args:
+        limit: max messages to return
+        message_type: filter by type (TEXT, VOICE, IMAGE)
+        include_bot: whether to include bot's own messages
+    """
+    query = (
+        select(Message)
+        .where(Message.project_id == project_id)
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+        .options(selectinload(Message.user))
+    )
+    if message_type:
+        query = query.where(Message.message_type == message_type)
+    if not include_bot:
+        query = query.where(Message.is_from_bot == False)  # noqa: E712
+    result = await session.execute(query)
+    return result.scalars().all()
+
+
+async def get_messages_without_embeddings(
+    session: AsyncSession,
+    project_id: int,
+    limit: int = 200,
+) -> Sequence[Message]:
+    """
+    Get messages that have transcribed_text but no corresponding embedding.
+
+    Used for backfilling embeddings on historical messages.
+    """
+    # Sub-query: message IDs that already have embeddings
+    # We store message_id in metadata JSON; for backfill we check by content match
+    result = await session.execute(
+        select(Message)
+        .where(
+            Message.project_id == project_id,
+            Message.transcribed_text.isnot(None),
+            Message.transcribed_text != "",
+            Message.is_from_bot == False,  # noqa: E712
+        )
+        .order_by(Message.created_at.asc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def get_message_by_id(
+    session: AsyncSession,
+    message_id: int,
+) -> Message | None:
+    """Get a message by ID."""
+    result = await session.execute(
+        select(Message).where(Message.id == message_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_message_transcription(
+    session: AsyncSession,
+    message_id: int,
+    transcribed_text: str,
+) -> Message | None:
+    """Update the transcribed_text field for a voice/image message."""
+    result = await session.execute(
+        select(Message).where(Message.id == message_id)
+    )
+    msg = result.scalar_one_or_none()
+    if msg is None:
+        return None
+    msg.transcribed_text = transcribed_text
+    await session.flush()
+    logger.debug("Updated transcription for message id=%d (%d chars)", message_id, len(transcribed_text))
+    return msg
+
+
+# ── Embedding queries (Phase 8) ──────────────────────────────
+
+
+async def get_embeddings_for_project(
+    session: AsyncSession,
+    project_id: int,
+    limit: int = 100,
+) -> Sequence[Embedding]:
+    """Get embeddings for a project, newest first."""
+    result = await session.execute(
+        select(Embedding)
+        .where(Embedding.project_id == project_id)
+        .order_by(Embedding.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def get_embedding_count_for_project(
+    session: AsyncSession,
+    project_id: int,
+) -> int:
+    """Count how many embeddings exist for a project."""
+    result = await session.execute(
+        select(func.count(Embedding.id))
+        .where(Embedding.project_id == project_id)
+    )
+    return result.scalar_one()

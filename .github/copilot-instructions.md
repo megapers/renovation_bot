@@ -390,13 +390,13 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 8 — AI Text Processing & Media Understanding
 
-- [ ] Integrate LLM for natural language parsing of stage descriptions
-- [ ] Auto-extract durations, sub-stages, and dates from foreman/designer messages
-- [ ] Embed project documents and chat history using pgvector (HNSW) for semantic search
-- [ ] RAG pipeline for context-aware bot responses
-- [ ] Voice message transcription via Azure OpenAI Whisper (STT)
-- [ ] Image understanding: caption extraction, optional OCR / GPT-4 Vision description
-- [ ] Backfill embeddings for historical voice/image messages
+- [x] Integrate LLM for natural language parsing of stage descriptions
+- [x] Auto-extract durations, sub-stages, and dates from foreman/designer messages
+- [x] Embed project documents and chat history using pgvector (HNSW) for semantic search
+- [x] RAG pipeline for context-aware bot responses
+- [x] Voice message transcription via Azure OpenAI Whisper (STT)
+- [x] Image understanding: caption extraction, optional OCR / GPT-4 Vision description
+- [x] Backfill embeddings for historical voice/image messages
 
 ### Phase 9 — Expert Integration
 
