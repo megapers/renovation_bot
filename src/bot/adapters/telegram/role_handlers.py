@@ -27,14 +27,14 @@ from bot.adapters.telegram.keyboards import (
     project_select_keyboard,
     role_select_keyboard,
 )
+from bot.adapters.telegram.formatters import format_team_list
 from bot.core.role_service import (
     ASSIGNABLE_ROLES,
     Permission,
     ROLE_LABELS,
     format_role_list,
-    format_team_list,
 )
-from bot.core.states import RoleManagement
+from bot.adapters.telegram.fsm_states import RoleManagement
 from bot.db.models import RoleType, User
 from bot.db.repositories import (
     assign_role,

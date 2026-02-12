@@ -190,14 +190,17 @@ def format_team_list(
     members: list[tuple[str, list[RoleType], bool]],
 ) -> str:
     """
-    Format the project team for display.
+    Format the project team as plain text (no platform markup).
+
+    For HTML-formatted output (Telegram), use
+    adapters/telegram/formatters.format_team_list() instead.
 
     Args:
         members: list of (full_name, [roles], is_bot_started)
     """
-    lines: list[str] = ["👥 <b>Команда проекта:</b>", ""]
+    lines: list[str] = ["Команда проекта:", ""]
     for name, roles, started in members:
         role_text = format_role_list(roles)
-        status = "" if started else " ⚠️ (не запустил бота)"
-        lines.append(f"• <b>{name}</b> — {role_text}{status}")
+        status = "" if started else " (не запустил бота)"
+        lines.append(f"• {name} — {role_text}{status}")
     return "\n".join(lines)

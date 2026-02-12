@@ -36,17 +36,28 @@ async def create_project(
     area_sqm: float | None = None,
     renovation_type: RenovationType,
     total_budget: float | None = None,
-    telegram_chat_id: int | None = None,
+    platform: str | None = None,
+    platform_chat_id: str | None = None,
 ) -> Project:
-    """Create a new renovation project."""
+    """Create a new renovation project.
+
+    Args:
+        platform: Messaging platform ("telegram", "whatsapp", etc.)
+        platform_chat_id: Chat/group ID on the platform (string for portability)
+    """
     project = Project(
         name=name,
         address=address,
         area_sqm=area_sqm,
         renovation_type=renovation_type,
         total_budget=total_budget,
-        telegram_chat_id=telegram_chat_id,
     )
+    # Route chat ID to the correct platform column
+    if platform == "telegram" and platform_chat_id:
+        project.telegram_chat_id = int(platform_chat_id)
+    # future: elif platform == "whatsapp" and platform_chat_id:
+    #     project.whatsapp_chat_id = platform_chat_id
+
     session.add(project)
     await session.flush()  # get project.id without committing
     logger.info("Created project: %s (id=%d)", name, project.id)
@@ -137,6 +148,29 @@ async def get_user_by_telegram_id(
         select(User).where(User.telegram_id == telegram_id)
     )
     return result.scalar_one_or_none()
+
+
+async def get_user_by_platform_id(
+    session: AsyncSession,
+    platform: str,
+    platform_id: str,
+) -> User | None:
+    """
+    Find a user by their platform-specific ID.
+
+    Routes to the correct column based on platform name.
+    Supports: telegram, whatsapp.
+    """
+    if platform == "telegram":
+        return await get_user_by_telegram_id(session, int(platform_id))
+    elif platform == "whatsapp":
+        result = await session.execute(
+            select(User).where(User.whatsapp_id == platform_id)
+        )
+        return result.scalar_one_or_none()
+    else:
+        logger.warning("Unknown platform: %s", platform)
+        return None
 
 
 # ── Stage management (Phase 3) ──────────────────────────────
@@ -288,6 +322,23 @@ async def get_project_by_telegram_chat_id(
     return result.scalar_one_or_none()
 
 
+async def get_project_by_platform_chat_id(
+    session: AsyncSession,
+    platform: str,
+    chat_id: str,
+) -> Project | None:
+    """
+    Find a project linked to a platform-specific chat/group.
+
+    Routes to the correct column based on platform.
+    """
+    if platform == "telegram":
+        return await get_project_by_telegram_chat_id(session, int(chat_id))
+    # future: elif platform == "whatsapp": ...
+    logger.warning("Unknown platform for chat lookup: %s", platform)
+    return None
+
+
 async def get_project_team(
     session: AsyncSession,
     project_id: int,
@@ -395,14 +446,36 @@ async def link_project_to_chat(
     telegram_chat_id: int,
 ) -> Project | None:
     """Link a project to a Telegram group chat."""
+    return await link_project_to_platform_chat(session, project_id, "telegram", str(telegram_chat_id))
+
+
+async def link_project_to_platform_chat(
+    session: AsyncSession,
+    project_id: int,
+    platform: str,
+    platform_chat_id: str,
+) -> Project | None:
+    """
+    Link a project to a platform-specific group chat.
+
+    Routes to the correct column based on platform.
+    """
     result = await session.execute(
         select(Project).where(Project.id == project_id)
     )
     project = result.scalar_one_or_none()
     if project is None:
         return None
-    project.telegram_chat_id = telegram_chat_id
+
+    if platform == "telegram":
+        project.telegram_chat_id = int(platform_chat_id)
+    # future: elif platform == "whatsapp":
+    #     project.whatsapp_chat_id = platform_chat_id
+    else:
+        logger.warning("Unknown platform for chat link: %s", platform)
+        return None
+
     await session.flush()
-    logger.info("Linked project_id=%d to telegram_chat_id=%d",
-                project_id, telegram_chat_id)
+    logger.info("Linked project_id=%d to %s chat_id=%s",
+                project_id, platform, platform_chat_id)
     return project

@@ -6,7 +6,8 @@ assigning the owner role, generating default stages, and adding parallel
 stages for custom furniture/fittings.
 
 This service is called by platform adapters (Telegram, WhatsApp) but
-never imports platform-specific code.
+never imports platform-specific code. Formatting / presentation logic
+lives in platform adapters (e.g. adapters/telegram/formatters.py).
 """
 
 import logging
@@ -14,7 +15,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.core.stage_templates import STANDARD_STAGES, build_parallel_stages
-from bot.db.models import Project, RenovationType, RoleType, Stage
+from bot.db.models import Project, RenovationType, RoleType
 from bot.db.repositories import (
     assign_role,
     create_project,
@@ -34,7 +35,8 @@ async def create_renovation_project(
     area_sqm: float | None = None,
     renovation_type: RenovationType,
     total_budget: float | None = None,
-    telegram_chat_id: int | None = None,
+    platform: str | None = None,
+    platform_chat_id: str | None = None,
     custom_items: list[str] | None = None,
 ) -> Project:
     """
@@ -43,6 +45,10 @@ async def create_renovation_project(
     2. Assign the creator as OWNER
     3. Generate standard renovation stages
     4. Add parallel stages for custom items (if any)
+
+    Args:
+        platform: Messaging platform identifier ("telegram", "whatsapp")
+        platform_chat_id: Chat/group ID on the platform (as string)
 
     Returns the created Project with stages loaded.
     """
@@ -54,7 +60,8 @@ async def create_renovation_project(
         area_sqm=area_sqm,
         renovation_type=renovation_type,
         total_budget=total_budget,
-        telegram_chat_id=telegram_chat_id,
+        platform=platform,
+        platform_chat_id=platform_chat_id,
     )
 
     # 2. Assign owner role
@@ -87,53 +94,3 @@ async def create_renovation_project(
     # Reload with stages
     result = await get_project_with_stages(session, project.id)
     return result  # type: ignore[return-value]
-
-
-def format_project_summary(project: Project) -> str:
-    """
-    Format a project summary for display to the user.
-
-    Platform adapters may wrap this in platform-specific formatting
-    (HTML for Telegram, plain text for WhatsApp).
-    """
-    type_labels = {
-        RenovationType.COSMETIC: "Косметический",
-        RenovationType.STANDARD: "Стандартный",
-        RenovationType.MAJOR: "Капитальный",
-        RenovationType.DESIGNER: "Дизайнерский",
-    }
-
-    lines = [
-        f"🏠 <b>{project.name}</b>",
-        "",
-    ]
-
-    if project.address:
-        lines.append(f"📍 Адрес: {project.address}")
-    if project.area_sqm:
-        lines.append(f"📐 Площадь: {project.area_sqm} м²")
-
-    lines.append(f"🔧 Тип ремонта: {type_labels.get(project.renovation_type, project.renovation_type.value)}")
-
-    if project.total_budget:
-        lines.append(f"💰 Бюджет: {project.total_budget:,.0f} ₸")
-
-    if project.stages:
-        lines.append("")
-        lines.append(f"📋 <b>Этапы ({len(project.stages)}):</b>")
-
-        # Separate main and parallel stages
-        main_stages = [s for s in project.stages if not s.is_parallel]
-        parallel_stages = [s for s in project.stages if s.is_parallel]
-
-        for stage in main_stages:
-            checkpoint = " ✅" if stage.is_checkpoint else ""
-            lines.append(f"  {stage.order}. {stage.name}{checkpoint}")
-
-        if parallel_stages:
-            lines.append("")
-            lines.append("  <b>Параллельные (мебель на заказ):</b>")
-            for stage in parallel_stages:
-                lines.append(f"  • {stage.name}")
-
-    return "\n".join(lines)

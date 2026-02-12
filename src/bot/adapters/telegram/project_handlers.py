@@ -25,8 +25,9 @@ from bot.adapters.telegram.keyboards import (
     skip_keyboard,
     yes_no_keyboard,
 )
-from bot.core.project_service import create_renovation_project, format_project_summary
-from bot.core.states import ProjectCreation
+from bot.adapters.telegram.formatters import format_project_summary
+from bot.core.project_service import create_renovation_project
+from bot.adapters.telegram.fsm_states import ProjectCreation
 from bot.db.models import RenovationType
 from bot.db.repositories import get_user_by_telegram_id
 from bot.db.session import async_session_factory
@@ -409,7 +410,8 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext) -> None:
             area_sqm=data.get("area_sqm"),
             renovation_type=RenovationType(data["renovation_type"]),
             total_budget=data.get("total_budget"),
-            telegram_chat_id=callback.message.chat.id if callback.message else None,  # type: ignore[union-attr]
+            platform="telegram",
+            platform_chat_id=str(callback.message.chat.id) if callback.message else None,  # type: ignore[union-attr]
             custom_items=data.get("custom_items") or None,
         )
 

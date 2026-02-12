@@ -37,12 +37,22 @@ class IncomingMessage:
 
 
 @dataclass
+class ButtonOption:
+    """A single button/option for interactive messages."""
+
+    label: str              # display text
+    callback_data: str      # data payload when pressed
+
+
+@dataclass
 class OutgoingMessage:
     """Platform-agnostic representation of an outgoing message."""
 
     chat_id: str
     text: str
-    parse_mode: str | None = None  # adapter translates to platform-specific format
+    format_type: str = "plain"          # "plain", "html", "markdown" — adapter maps to platform format
+    buttons: list[list[ButtonOption]] | None = None   # rows of buttons (inline keyboard / interactive list)
+    edit_message_id: str | None = None  # if set, edit existing message instead of sending new
 
 
 class PlatformAdapter(ABC):
@@ -55,7 +65,17 @@ class PlatformAdapter(ABC):
 
     @abstractmethod
     async def send_message(self, message: OutgoingMessage) -> None:
-        """Send a text message to a chat."""
+        """Send a text message to a chat, with optional buttons."""
+        ...
+
+    @abstractmethod
+    async def edit_message(self, message: OutgoingMessage) -> None:
+        """Edit an existing message (if platform supports it)."""
+        ...
+
+    @abstractmethod
+    async def download_file(self, file_ref: str) -> bytes:
+        """Download a media file from the platform by reference."""
         ...
 
     @abstractmethod

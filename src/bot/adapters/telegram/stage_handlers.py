@@ -27,15 +27,17 @@ from bot.adapters.telegram.keyboards import (
     stages_list_keyboard,
     substages_keyboard,
 )
-from bot.core.stage_service import (
-    format_date,
+from bot.adapters.telegram.formatters import (
     format_launch_summary,
     format_stage_detail,
     format_stages_overview,
+)
+from bot.core.stage_service import (
+    format_date,
     parse_date,
     validate_launch_readiness,
 )
-from bot.core.states import StageSetup
+from bot.adapters.telegram.fsm_states import StageSetup
 from bot.db.repositories import (
     create_sub_stages_bulk,
     get_previous_stage,

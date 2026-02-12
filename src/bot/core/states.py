@@ -1,81 +1,54 @@
 """
-FSM (Finite State Machine) states for multi-step conversations.
+FSM (Finite State Machine) state definitions — platform-agnostic.
 
-These represent the steps in the project creation wizard and other
-multi-turn flows. States are platform-agnostic — the adapter layer
-maps them to platform-specific state storage (e.g. aiogram FSMContext).
+These are pure Python enums that define the conversation states for
+multi-step flows. They contain NO platform-specific imports.
+
+Each platform adapter maps these identifiers to its own FSM
+implementation:
+  - Telegram: aiogram StatesGroup (see adapters/telegram/fsm_states.py)
+  - WhatsApp: session-based or Redis-backed state machine (future)
 """
 
-from aiogram.fsm.state import State, StatesGroup
+import enum
 
 
-class ProjectCreation(StatesGroup):
-    """
-    States for the guided project creation flow.
+class ProjectCreationState(str, enum.Enum):
+    """States for the guided project creation flow."""
 
-    Flow: name → address → area → type → budget → coordinator → co-owner → stages → confirm
-    """
-
-    waiting_for_name = State()          # Step 1: Property name
-    waiting_for_address = State()       # Step 2: Address
-    waiting_for_area = State()          # Step 3: Area in sqm (optional)
-    waiting_for_type = State()          # Step 4: Renovation type (inline keyboard)
-    waiting_for_budget = State()        # Step 5: Total budget
-    waiting_for_coordinator = State()   # Step 6: Who manages? (Self / Foreman / Designer)
-    waiting_for_coordinator_contact = State()  # Step 6b: Coordinator contact info
-    waiting_for_co_owner = State()      # Step 7: Add co-owner? (Yes/No)
-    waiting_for_co_owner_contact = State()    # Step 7b: Co-owner contact info
-    waiting_for_custom_items = State()  # Step 8: Custom furniture? (multi-select)
-    reviewing_stages = State()          # Step 9: Review/edit auto-generated stages
-    confirming = State()                # Step 10: Final confirmation
+    WAITING_FOR_NAME = "project_creation:waiting_for_name"
+    WAITING_FOR_ADDRESS = "project_creation:waiting_for_address"
+    WAITING_FOR_AREA = "project_creation:waiting_for_area"
+    WAITING_FOR_TYPE = "project_creation:waiting_for_type"
+    WAITING_FOR_BUDGET = "project_creation:waiting_for_budget"
+    WAITING_FOR_COORDINATOR = "project_creation:waiting_for_coordinator"
+    WAITING_FOR_COORDINATOR_CONTACT = "project_creation:waiting_for_coordinator_contact"
+    WAITING_FOR_CO_OWNER = "project_creation:waiting_for_co_owner"
+    WAITING_FOR_CO_OWNER_CONTACT = "project_creation:waiting_for_co_owner_contact"
+    WAITING_FOR_CUSTOM_ITEMS = "project_creation:waiting_for_custom_items"
+    REVIEWING_STAGES = "project_creation:reviewing_stages"
+    CONFIRMING = "project_creation:confirming"
 
 
-class StageSetup(StatesGroup):
-    """
-    States for stage configuration: deadlines, assignments, budgets,
-    sub-stages, and project launch.
+class StageSetupState(str, enum.Enum):
+    """States for stage configuration."""
 
-    Accessed via /stages and /launch commands.
-
-    FSM data keys used:
-      project_id  — current project being configured
-      stage_id    — stage currently being edited
-      date_mode   — "duration" | "exact" (how dates are entered)
-    """
-
-    selecting_project = State()        # Pick project (if user has multiple)
-    viewing_stages = State()           # Browsing the stage list
-    viewing_stage_detail = State()     # Viewing one stage's details
-
-    # Date entry
-    setting_start_date = State()       # Entering start date (DD.MM.YYYY)
-    setting_end_date = State()         # Entering end date (DD.MM.YYYY)
-    setting_duration = State()         # Entering duration in days
-
-    # Person & budget
-    assigning_person = State()         # Entering responsible person name/contact
-    setting_stage_budget = State()     # Entering budget amount for stage
-
-    # Sub-stages
-    adding_sub_stages = State()        # Entering sub-stage names (one per line)
-
-    # Launch
-    confirming_launch = State()        # Final project launch confirmation
+    SELECTING_PROJECT = "stage_setup:selecting_project"
+    VIEWING_STAGES = "stage_setup:viewing_stages"
+    VIEWING_STAGE_DETAIL = "stage_setup:viewing_stage_detail"
+    SETTING_START_DATE = "stage_setup:setting_start_date"
+    SETTING_END_DATE = "stage_setup:setting_end_date"
+    SETTING_DURATION = "stage_setup:setting_duration"
+    ASSIGNING_PERSON = "stage_setup:assigning_person"
+    SETTING_STAGE_BUDGET = "stage_setup:setting_stage_budget"
+    ADDING_SUB_STAGES = "stage_setup:adding_sub_stages"
+    CONFIRMING_LAUNCH = "stage_setup:confirming_launch"
 
 
-class RoleManagement(StatesGroup):
-    """
-    States for inviting and managing team members.
+class RoleManagementState(str, enum.Enum):
+    """States for inviting and managing team members."""
 
-    Accessed via /invite command.
-
-    FSM data keys used:
-      project_id    — target project
-      invite_role   — RoleType being assigned
-      target_user_id — user being invited (if resolved)
-    """
-
-    selecting_project = State()        # Pick project (if user has multiple)
-    choosing_role = State()            # Select which role to assign
-    entering_contact = State()         # Enter @username or forward a message
-    confirming_invite = State()        # Confirm the invitation
+    SELECTING_PROJECT = "role_management:selecting_project"
+    CHOOSING_ROLE = "role_management:choosing_role"
+    ENTERING_CONTACT = "role_management:entering_contact"
+    CONFIRMING_INVITE = "role_management:confirming_invite"

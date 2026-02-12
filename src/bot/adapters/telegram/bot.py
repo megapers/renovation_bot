@@ -49,11 +49,49 @@ class TelegramAdapter(PlatformAdapter):
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""
+        # Map generic format_type to Telegram parse_mode
+        parse_mode_map = {
+            "html": ParseMode.HTML,
+            "markdown": ParseMode.MARKDOWN_V2,
+            "plain": None,
+        }
+        parse_mode = parse_mode_map.get(message.format_type)
+
         await self.bot.send_message(
             chat_id=int(message.chat_id),
             text=message.text,
-            parse_mode=message.parse_mode,
+            parse_mode=parse_mode,
         )
+
+    async def edit_message(self, message: OutgoingMessage) -> None:
+        """Edit an existing Telegram message."""
+        if message.edit_message_id is None:
+            logger.warning("edit_message called without edit_message_id")
+            return
+
+        parse_mode_map = {
+            "html": ParseMode.HTML,
+            "markdown": ParseMode.MARKDOWN_V2,
+            "plain": None,
+        }
+        parse_mode = parse_mode_map.get(message.format_type)
+
+        await self.bot.edit_message_text(
+            chat_id=int(message.chat_id),
+            message_id=int(message.edit_message_id),
+            text=message.text,
+            parse_mode=parse_mode,
+        )
+
+    async def download_file(self, file_ref: str) -> bytes:
+        """Download a file from Telegram by file_id."""
+        file = await self.bot.get_file(file_ref)
+        if file.file_path is None:
+            raise ValueError(f"Cannot download file: {file_ref}")
+        result = await self.bot.download_file(file.file_path)
+        if result is None:
+            raise ValueError(f"Download returned empty for: {file_ref}")
+        return result.read()
 
     async def start(self) -> None:
         """Start polling for Telegram updates (good for development)."""
