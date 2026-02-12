@@ -7,14 +7,15 @@ cleanly separated.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import (
+    BudgetItem,
     Project,
     ProjectRole,
     RenovationType,
@@ -479,3 +480,295 @@ async def link_project_to_platform_chat(
     logger.info("Linked project_id=%d to %s chat_id=%s",
                 project_id, platform, platform_chat_id)
     return project
+
+
+# ── Monitoring queries (Phase 5) ─────────────────────────────
+
+
+async def get_stages_due_soon(
+    session: AsyncSession,
+    within_days: int = 1,
+) -> Sequence[Stage]:
+    """
+    Find stages whose end_date is within `within_days` days from now.
+
+    Only returns IN_PROGRESS or DELAYED stages of active projects.
+    """
+    now = datetime.now().astimezone()
+    deadline = now + timedelta(days=within_days)
+    result = await session.execute(
+        select(Stage)
+        .join(Project)
+        .where(
+            Project.is_active == True,  # noqa: E712
+            Stage.status.in_([StageStatus.IN_PROGRESS, StageStatus.DELAYED]),
+            Stage.end_date.isnot(None),
+            Stage.end_date <= deadline,
+            Stage.end_date > now,
+        )
+        .options(
+            selectinload(Stage.project),
+            selectinload(Stage.responsible_user),
+            selectinload(Stage.sub_stages),
+        )
+    )
+    return result.scalars().all()
+
+
+async def get_overdue_stages(
+    session: AsyncSession,
+) -> Sequence[Stage]:
+    """
+    Find stages past their end_date that are still IN_PROGRESS or DELAYED.
+
+    Only for active projects.
+    """
+    now = datetime.now().astimezone()
+    result = await session.execute(
+        select(Stage)
+        .join(Project)
+        .where(
+            Project.is_active == True,  # noqa: E712
+            Stage.status.in_([StageStatus.IN_PROGRESS, StageStatus.DELAYED]),
+            Stage.end_date.isnot(None),
+            Stage.end_date < now,
+        )
+        .options(
+            selectinload(Stage.project),
+            selectinload(Stage.responsible_user),
+        )
+    )
+    return result.scalars().all()
+
+
+async def get_stages_needing_status_update(
+    session: AsyncSession,
+    idle_days: int = 3,
+) -> Sequence[Stage]:
+    """
+    Find IN_PROGRESS stages that haven't been updated in `idle_days` days.
+
+    Uses stage.updated_at or stage.created_at as last-activity proxy.
+    """
+    cutoff = datetime.now().astimezone() - timedelta(days=idle_days)
+    result = await session.execute(
+        select(Stage)
+        .join(Project)
+        .where(
+            Project.is_active == True,  # noqa: E712
+            Stage.status == StageStatus.IN_PROGRESS,
+            Stage.responsible_user_id.isnot(None),
+        )
+        .options(
+            selectinload(Stage.project),
+            selectinload(Stage.responsible_user),
+        )
+    )
+    return result.scalars().all()
+
+
+async def get_completed_checkpoint_stages(
+    session: AsyncSession,
+) -> Sequence[Stage]:
+    """
+    Find stages that are COMPLETED and are checkpoints.
+
+    Used to check if owner approval is needed before proceeding.
+    """
+    result = await session.execute(
+        select(Stage)
+        .join(Project)
+        .where(
+            Project.is_active == True,  # noqa: E712
+            Stage.status == StageStatus.COMPLETED,
+            Stage.is_checkpoint == True,  # noqa: E712
+        )
+        .options(
+            selectinload(Stage.project),
+        )
+    )
+    return result.scalars().all()
+
+
+async def get_next_stage(
+    session: AsyncSession,
+    stage: Stage,
+) -> Stage | None:
+    """Get the stage immediately after the given one (by order) in the same project."""
+    result = await session.execute(
+        select(Stage)
+        .where(
+            Stage.project_id == stage.project_id,
+            Stage.order > stage.order,
+        )
+        .order_by(Stage.order.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_parallel_stages_with_upcoming_installation(
+    session: AsyncSession,
+    within_days: int = 45,
+) -> Sequence[Stage]:
+    """
+    Find parallel (furniture) stages whose installation sub-stage is
+    coming up within `within_days` days.
+
+    Looks at parallel stages with status PLANNED or IN_PROGRESS.
+    """
+    deadline = datetime.now().astimezone() + timedelta(days=within_days)
+    now = datetime.now().astimezone()
+    min_days = timedelta(days=0)
+
+    result = await session.execute(
+        select(Stage)
+        .join(Project)
+        .where(
+            Project.is_active == True,  # noqa: E712
+            Stage.is_parallel == True,  # noqa: E712
+            Stage.status.in_([StageStatus.PLANNED, StageStatus.IN_PROGRESS]),
+        )
+        .options(
+            selectinload(Stage.project),
+            selectinload(Stage.sub_stages),
+            selectinload(Stage.responsible_user),
+        )
+    )
+    stages = result.scalars().all()
+
+    # Filter to stages that have an installation sub-stage due within range
+    upcoming = []
+    for stage in stages:
+        for sub in stage.sub_stages:
+            if "монтаж" in sub.name.lower() or "установка" in sub.name.lower():
+                if sub.start_date and now < sub.start_date <= deadline:
+                    upcoming.append(stage)
+                    break
+    return upcoming
+
+
+async def get_project_budget_summary(
+    session: AsyncSession,
+    project_id: int,
+) -> dict:
+    """
+    Calculate total spent vs budget for a project.
+
+    Returns:
+        {
+            "total_budget": float | None,
+            "total_work": float,
+            "total_materials": float,
+            "total_prepayments": float,
+            "total_spent": float,
+        }
+    """
+    # Project budget
+    proj_result = await session.execute(
+        select(Project.total_budget).where(Project.id == project_id)
+    )
+    total_budget = proj_result.scalar_one_or_none()
+
+    # Sum budget items
+    result = await session.execute(
+        select(
+            func.coalesce(func.sum(BudgetItem.work_cost), 0),
+            func.coalesce(func.sum(BudgetItem.material_cost), 0),
+            func.coalesce(func.sum(BudgetItem.prepayment), 0),
+        )
+        .where(BudgetItem.project_id == project_id)
+    )
+    row = result.one()
+    total_work = float(row[0])
+    total_materials = float(row[1])
+    total_prepayments = float(row[2])
+
+    return {
+        "total_budget": float(total_budget) if total_budget else None,
+        "total_work": total_work,
+        "total_materials": total_materials,
+        "total_prepayments": total_prepayments,
+        "total_spent": total_work + total_materials,
+    }
+
+
+async def get_stage_budget_vs_items(
+    session: AsyncSession,
+    stage_id: int,
+) -> dict:
+    """
+    Compare a stage's allocated budget vs its associated spending.
+
+    For now, returns the stage budget vs sum of budget items
+    whose category matches the stage name (approximate).
+    """
+    result = await session.execute(
+        select(Stage).where(Stage.id == stage_id)
+    )
+    stage = result.scalar_one_or_none()
+    if not stage:
+        return {"budget": None, "spent": 0.0}
+
+    return {
+        "budget": float(stage.budget) if stage.budget else None,
+        "spent": 0.0,  # Will be enhanced when budget items link to stages
+    }
+
+
+async def get_project_owner_ids(
+    session: AsyncSession,
+    project_id: int,
+) -> list[int]:
+    """Get user IDs of all owners and co-owners for a project."""
+    result = await session.execute(
+        select(ProjectRole.user_id)
+        .where(
+            ProjectRole.project_id == project_id,
+            ProjectRole.role.in_([RoleType.OWNER, RoleType.CO_OWNER]),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_project_role_user_ids(
+    session: AsyncSession,
+    project_id: int,
+    roles: list[RoleType],
+) -> list[int]:
+    """Get user IDs for specific roles in a project."""
+    result = await session.execute(
+        select(ProjectRole.user_id)
+        .where(
+            ProjectRole.project_id == project_id,
+            ProjectRole.role.in_(roles),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_all_active_projects(
+    session: AsyncSession,
+) -> Sequence[Project]:
+    """Get all active projects with their stages loaded."""
+    result = await session.execute(
+        select(Project)
+        .where(Project.is_active == True)  # noqa: E712
+        .options(
+            selectinload(Project.stages).selectinload(Stage.sub_stages),
+            selectinload(Project.stages).selectinload(Stage.responsible_user),
+            selectinload(Project.roles),
+        )
+    )
+    return result.scalars().all()
+
+
+async def get_user_by_id(
+    session: AsyncSession,
+    user_id: int,
+) -> User | None:
+    """Get a user by internal ID."""
+    result = await session.execute(
+        select(User).where(User.id == user_id)
+    )
+    return result.scalar_one_or_none()

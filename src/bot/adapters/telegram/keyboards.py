@@ -197,6 +197,9 @@ def stage_actions_keyboard(stage_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📝 Подзадачи", callback_data=f"stgsub:{stage_id}"),
         ],
         [
+            InlineKeyboardButton(text="🔄 Статус", callback_data=f"stgchst:{stage_id}"),
+        ],
+        [
             InlineKeyboardButton(text="↩️ К списку этапов", callback_data="stgback"),
         ],
     ])
@@ -339,6 +342,61 @@ def team_member_keyboard(
             InlineKeyboardButton(
                 text="🗑 Удалить из проекта",
                 callback_data=f"tmrm:{project_id}:{user_id}",
+            ),
+        ],
+    ])
+
+
+# ── Notification / checkpoint keyboards (Phase 5) ────────────
+
+
+def checkpoint_keyboard(stage_id: int) -> InlineKeyboardMarkup:
+    """Checkpoint approval / rejection buttons."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Одобрить",
+                callback_data=f"chkpt:approve:{stage_id}",
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"chkpt:reject:{stage_id}",
+            ),
+        ],
+    ])
+
+
+def stage_status_keyboard(stage_id: int) -> InlineKeyboardMarkup:
+    """
+    Change stage status — used in stage detail view.
+
+    Shows available status transitions.
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔨 В работу",
+                callback_data=f"stgsts:in_progress:{stage_id}",
+            ),
+            InlineKeyboardButton(
+                text="✅ Завершить",
+                callback_data=f"stgcomplete:{stage_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="⚠️ Задержка",
+                callback_data=f"stgsts:delayed:{stage_id}",
+            ),
+            InlineKeyboardButton(
+                text="📋 Запланирован",
+                callback_data=f"stgsts:planned:{stage_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="↩️ Назад",
+                callback_data=f"stg:{stage_id}",
             ),
         ],
     ])

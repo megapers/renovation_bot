@@ -20,6 +20,8 @@ dependencies = [
     "openai>=1.59,<2",
     # pgvector support for SQLAlchemy
     "pgvector>=0.3,<1",
+    # Task scheduling
+    "apscheduler>=3.10,<4",
 ]
 
 [project.optional-dependencies]

@@ -15,10 +15,16 @@ from bot.adapters.base import OutgoingMessage, PlatformAdapter
 from bot.adapters.telegram.handlers import router as handlers_router
 from bot.adapters.telegram.group_handlers import router as group_router
 from bot.adapters.telegram.middleware import RoleMiddleware
+from bot.adapters.telegram.notification_handlers import (
+    deliver_notification,
+    router as notification_router,
+)
 from bot.adapters.telegram.project_handlers import router as project_router
 from bot.adapters.telegram.role_handlers import router as role_router
 from bot.adapters.telegram.stage_handlers import router as stage_router
 from bot.config import settings
+from bot.core.notification_service import Notification
+from bot.core.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +47,12 @@ class TelegramAdapter(PlatformAdapter):
         self.dp.callback_query.middleware(RoleMiddleware())
 
         # Register routers in order of priority
-        self.dp.include_router(group_router)      # group chat events (bot added/removed)
-        self.dp.include_router(handlers_router)    # /start and general commands
-        self.dp.include_router(project_router)     # /newproject wizard
-        self.dp.include_router(stage_router)       # /stages, /launch
-        self.dp.include_router(role_router)        # /team, /invite, /myrole
+        self.dp.include_router(group_router)           # group chat events (bot added/removed)
+        self.dp.include_router(handlers_router)        # /start and general commands
+        self.dp.include_router(project_router)         # /newproject wizard
+        self.dp.include_router(stage_router)           # /stages, /launch
+        self.dp.include_router(notification_router)    # checkpoint approval, status changes
+        self.dp.include_router(role_router)            # /team, /invite, /myrole
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""
@@ -94,11 +101,20 @@ class TelegramAdapter(PlatformAdapter):
         return result.read()
 
     async def start(self) -> None:
-        """Start polling for Telegram updates (good for development)."""
+        """Start polling for Telegram updates and launch the scheduler."""
         logger.info("Starting Telegram bot (polling mode)...")
+
+        # Start the background scheduler for deadline checks, reminders, etc.
+        async def _send_notification(notification: Notification) -> None:
+            await deliver_notification(notification, self.bot)
+
+        start_scheduler(_send_notification)
+        logger.info("Background scheduler started")
+
         await self.dp.start_polling(self.bot)
 
     async def stop(self) -> None:
-        """Shut down the Telegram bot gracefully."""
+        """Shut down the Telegram bot and scheduler gracefully."""
         logger.info("Stopping Telegram bot...")
+        stop_scheduler()
         await self.bot.session.close()

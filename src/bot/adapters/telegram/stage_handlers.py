@@ -24,6 +24,7 @@ from bot.adapters.telegram.keyboards import (
     launch_keyboard,
     project_select_keyboard,
     stage_actions_keyboard,
+    stage_status_keyboard,
     stages_list_keyboard,
     substages_keyboard,
 )
@@ -664,6 +665,34 @@ async def process_add_substages(message: Message, state: FSMContext) -> None:
         f"✅ Добавлено подзадач: <b>{len(subs)}</b>\n\n{names_text}"
     )
     await _show_stage_detail(message, state, stage_id)
+
+
+# ═══════════════════════════════════════════════════════════════
+# STAGE STATUS CHANGE
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.callback_query(F.data.startswith("stgchst:"))
+async def show_status_change(callback: CallbackQuery, state: FSMContext) -> None:
+    """Show status change options for a stage."""
+    await callback.answer()
+    stage_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+
+    async with async_session_factory() as session:
+        stage = await get_stage_with_substages(session, stage_id)
+    if stage is None:
+        await callback.message.edit_text("❌ Этап не найден.")  # type: ignore[union-attr]
+        return
+
+    text = (
+        f"🔄 <b>Изменение статуса: {stage.name}</b>\n\n"
+        f"Текущий статус: {format_date(stage.start_date) if stage.start_date else '—'}\n"
+        "Выберите новый статус:"
+    )
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        text,
+        reply_markup=stage_status_keyboard(stage_id),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════

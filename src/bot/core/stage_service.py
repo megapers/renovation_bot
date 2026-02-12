@@ -1,6 +1,6 @@
 """
 Core service for stage management — deadlines, assignments, budgets,
-sub-stages, and project launch readiness.
+sub-stages, project launch readiness, and checkpoint logic.
 
 Contains platform-agnostic business logic. Called by platform adapters
 (Telegram, WhatsApp) but never imports platform-specific code.
@@ -9,7 +9,7 @@ Contains platform-agnostic business logic. Called by platform adapters
 import logging
 from datetime import datetime, timezone
 
-from bot.db.models import Project
+from bot.db.models import Project, Stage, StageStatus
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +105,74 @@ def validate_launch_readiness(project: Project) -> tuple[bool, list[str]]:
             warnings.append(f"«{stage.name}» — нет бюджета")
 
     return True, warnings
+
+
+# ── Checkpoint logic ─────────────────────────────────────────
+
+
+# Checkpoint stage descriptions (Russian)
+CHECKPOINT_DESCRIPTIONS: dict[str, str] = {
+    "Электрика": "Проверьте количество и расположение розеток по плану",
+    "Сантехника": "Проверьте расположение выводов для душа, смесителей и унитаза",
+    "Плитка": "Самая частая точка для вызова эксперта — проверка качества укладки",
+    "Шпаклёвка": "Важная контрольная точка — проверка качества перед покраской",
+    "Итоговая приёмка": "Общая проверка завершённых работ",
+}
+
+
+def get_checkpoint_description(stage_name: str) -> str:
+    """
+    Get a human-readable description for a checkpoint stage.
+
+    Returns a default message if the stage name isn't in the known checkpoints.
+    """
+    for key, desc in CHECKPOINT_DESCRIPTIONS.items():
+        if key.lower() in stage_name.lower():
+            return desc
+    return "Контрольная точка — требуется проверка и одобрение перед продолжением"
+
+
+def can_proceed_to_next_stage(completed_stage: Stage) -> tuple[bool, str]:
+    """
+    Check if we can proceed to the next stage after the given stage is completed.
+
+    If the completed stage is a checkpoint, it requires explicit owner approval.
+
+    Returns:
+        (can_proceed, reason)
+    """
+    if completed_stage.is_checkpoint:
+        return False, (
+            f"Этап «{completed_stage.name}» — контрольная точка.\n"
+            f"{get_checkpoint_description(completed_stage.name)}\n"
+            "Требуется одобрение владельца проекта."
+        )
+    return True, ""
+
+
+def get_stage_completion_info(stage: Stage) -> dict:
+    """
+    Get a summary of stage completion status.
+
+    Useful for generating completion reports.
+    """
+    info = {
+        "name": stage.name,
+        "status": stage.status.value,
+        "is_checkpoint": stage.is_checkpoint,
+        "started": stage.start_date is not None,
+        "has_deadline": stage.end_date is not None,
+        "has_responsible": stage.responsible_contact is not None or stage.responsible_user_id is not None,
+        "has_budget": stage.budget is not None,
+    }
+
+    if stage.end_date and stage.status == StageStatus.IN_PROGRESS:
+        now = datetime.now(tz=timezone.utc)
+        remaining = (stage.end_date - now).days
+        info["days_remaining"] = remaining
+        info["is_overdue"] = remaining < 0
+
+    return info
 
 
 # format_launch_summary has been moved to adapters/telegram/formatters.py

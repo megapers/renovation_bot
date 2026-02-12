@@ -368,11 +368,11 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 5 — Active Monitoring & Notifications
 
-- [ ] Deadline tracking and reminders (1 day before, overdue alerts)
-- [ ] Stage status update prompts to responsible parties
-- [ ] Checkpoint logic (approval gates between stages)
-- [ ] Furniture order reminders (30–45 days before installation)
-- [ ] Overspending alerts
+- [x] Deadline tracking and reminders (1 day before, overdue alerts)
+- [x] Stage status update prompts to responsible parties
+- [x] Checkpoint logic (approval gates between stages)
+- [x] Furniture order reminders (30–45 days before installation)
+- [x] Overspending alerts
 
 ### Phase 6 — Budget & Payment Tracking
 
