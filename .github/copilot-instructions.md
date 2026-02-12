@@ -361,10 +361,10 @@ Chat members: Client, Coordinator (foreman or designer), Bot
 
 ### Phase 4 — Roles & Permissions
 
-- [ ] Implement role system: Owner, Co-owner, Foreman, Tradesperson, Designer, Expert
-- [ ] Role-based command access
-- [ ] Group chat + private chat logic
-- [ ] START command requirement for private messaging
+- [x] Implement role system: Owner, Co-owner, Foreman, Tradesperson, Designer, Expert
+- [x] Role-based command access
+- [x] Group chat + private chat logic
+- [x] START command requirement for private messaging
 
 ### Phase 5 — Active Monitoring & Notifications
 
