@@ -132,7 +132,7 @@ async def get_user_projects(
     session: AsyncSession,
     user_id: int,
 ) -> Sequence[Project]:
-    """Get all active projects where the user has a role."""
+    """Get all active projects where the user has a role (newest first)."""
     result = await session.execute(
         select(Project)
         .join(ProjectRole)
@@ -140,6 +140,7 @@ async def get_user_projects(
             ProjectRole.user_id == user_id,
             Project.is_active == True,  # noqa: E712
         )
+        .order_by(Project.created_at.desc())
     )
     return result.scalars().all()
 
