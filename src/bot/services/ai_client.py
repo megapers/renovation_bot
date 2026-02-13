@@ -408,7 +408,9 @@ async def describe_image(
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     image_url = f"data:{mime_type};base64,{b64}"
 
-    prompt = (
+    from bot.services.skills_loader import get_skill_prompt
+
+    prompt = get_skill_prompt("image-describer") or (
         "Ты помощник по ремонту квартир. "
         "Опиши что изображено на этой фотографии в контексте ремонта. "
         "Включи: что изображено, текущее состояние работ, "

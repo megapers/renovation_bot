@@ -85,6 +85,22 @@ class Settings(BaseSettings):
             return self.azure_openai_whisper_deployment or "whisper"
         return self.ai_whisper_model
 
+    # ── WhatsApp Business Cloud API ──────────────────────────
+    whatsapp_phone_number_id: str = ""    # From Meta Business Suite → API Setup
+    whatsapp_access_token: str = ""       # Permanent or system user token
+    whatsapp_app_secret: str = ""         # For webhook signature verification
+    whatsapp_verify_token: str = ""       # Custom token for webhook subscription
+    whatsapp_ack_emoji: str = "👀"        # Ack reaction emoji (empty to disable)
+
+    # ── Mention Gating (group chats) ─────────────────────────
+    # When True, bot only responds in groups when @mentioned or replied to.
+    # Inspired by OpenClaw's requireMention / /activation pattern.
+    mention_gate_enabled: bool = True
+    mention_gate_patterns: str = ""       # Comma-separated extra mention patterns
+
+    # ── Skills (AI prompt management) ────────────────────────
+    skills_dir: str = ""                  # Custom skills directory (default: skills/)
+
     # ── App ───────────────────────────────────────────────────
     log_level: str = "INFO"
     debug: bool = False

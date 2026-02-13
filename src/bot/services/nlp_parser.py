@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from bot.services.ai_client import chat_completion, is_ai_configured
+from bot.services.skills_loader import get_skill_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -57,36 +58,58 @@ class ParsedExpense(BaseModel):
 
 class ParsedMessage(BaseModel):
     """Full result of NLP message parsing."""
-    intent: str = Field(description="Намерение: stage_plan | expense | status_update | question | other")
+    intent: str = Field(
+        description="Намерение: stage_plan | expense | status_update | question | other",
+    )
     stages: list[ParsedStageInfo] = Field(default_factory=list)
     expenses: list[ParsedExpense] = Field(default_factory=list)
     status_update: str | None = Field(default=None)
     raw_summary: str = Field(default="", description="Краткое резюме сообщения")
 
 
-# ── System prompts ─────────────────────────────────────────
+# ── System prompts (fallback if skill not found) ──────────
 
 
-_STAGE_PARSER_SYSTEM = """Ты — помощник по ремонту квартир. Твоя задача — извлечь структурированную информацию из сообщений прорабов, дизайнеров и рабочих.
+_STAGE_PARSER_SYSTEM_FALLBACK = (
+    "Ты — помощник по ремонту квартир. "
+    "Твоя задача — извлечь структурированную информацию "
+    "из сообщений прорабов, дизайнеров и рабочих.\n\n"
+    "Тебе дают текст сообщения. Определи намерение "
+    "(intent) и извлеки данные.\n\n"
+    "Возможные intent:\n"
+    '- "stage_plan" — описание этапа работ '
+    "с подэтапами и сроками\n"
+    '- "expense" — информация о расходах, '
+    "оплатах, стоимости\n"
+    '- "status_update" — обновление статуса работ '
+    '("плитку положили", "электрика готова")\n'
+    '- "question" — вопрос от участника\n'
+    '- "other" — прочее\n\n'
+    "Правила:\n"
+    "1. Если упоминаются сроки в неделях — "
+    "переведи в дни (1 неделя = 7 дней)\n"
+    "2. Если упоминаются несколько подэтапов — "
+    "перечисли каждый отдельно\n"
+    "3. Если упоминается бюджет/стоимость — "
+    "извлеки числа\n"
+    "4. Суммы в рублях, если не указана "
+    "другая валюта\n"
+    "5. Названия подэтапов начинай "
+    "с заглавной буквы\n"
+    "6. Всегда возвращай краткое резюме "
+    "(raw_summary)\n\n"
+    "Ответ ТОЛЬКО в формате JSON (без markdown), "
+    "строго следуя схеме."
+)
 
-Тебе дают текст сообщения. Определи намерение (intent) и извлеки данные.
 
-Возможные intent:
-- "stage_plan" — описание этапа работ с подэтапами и сроками
-- "expense" — информация о расходах, оплатах, стоимости
-- "status_update" — обновление статуса работ ("плитку положили", "электрика готова")
-- "question" — вопрос от участника
-- "other" — прочее
-
-Правила:
-1. Если упоминаются сроки в неделях — переведи в дни (1 неделя = 7 дней)
-2. Если упоминаются несколько подэтапов — перечисли каждый отдельно
-3. Если упоминается бюджет/стоимость — извлеки числа
-4. Суммы в рублях, если не указана другая валюта
-5. Названия подэтапов начинай с заглавной буквы
-6. Всегда возвращай краткое резюме (raw_summary)
-
-Ответ ТОЛЬКО в формате JSON (без markdown), строго следуя схеме."""
+def _get_parser_system_prompt() -> str:
+    """Load NLP parser system prompt from skill file, falling back to built-in."""
+    prompt = get_skill_prompt("nlp-parser")
+    if prompt:
+        return prompt
+    logger.debug("Skill 'nlp-parser' not found, using fallback prompt")
+    return _STAGE_PARSER_SYSTEM_FALLBACK
 
 _STAGE_PARSER_SCHEMA = """{
   "intent": "stage_plan | expense | status_update | question | other",
@@ -131,7 +154,7 @@ async def parse_message(text: str) -> ParsedMessage | None:
         return None
 
     messages = [
-        {"role": "system", "content": _STAGE_PARSER_SYSTEM},
+        {"role": "system", "content": _get_parser_system_prompt()},
         {
             "role": "user",
             "content": (

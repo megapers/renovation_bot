@@ -7,7 +7,7 @@ Telegram logic lives here, never in core/.
 
 import logging
 
-from aiogram import Bot, Dispatcher, Router
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
@@ -15,11 +15,14 @@ from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandSc
 from bot.adapters.base import OutgoingMessage, PlatformAdapter
 from bot.adapters.telegram.ai_handlers import router as ai_router
 from bot.adapters.telegram.budget_handlers import router as budget_router
-from bot.adapters.telegram.handlers import router as handlers_router
 from bot.adapters.telegram.group_handlers import router as group_router
+from bot.adapters.telegram.handlers import router as handlers_router
+from bot.adapters.telegram.mention_gate import MentionGateMiddleware
 from bot.adapters.telegram.middleware import RoleMiddleware
 from bot.adapters.telegram.notification_handlers import (
     deliver_notification,
+)
+from bot.adapters.telegram.notification_handlers import (
     router as notification_router,
 )
 from bot.adapters.telegram.project_handlers import router as project_router
@@ -47,6 +50,7 @@ class TelegramAdapter(PlatformAdapter):
     def _register_routers(self) -> None:
         """Attach all handler routers and middleware to the dispatcher."""
         # Register middleware (runs before every handler)
+        # Note: MentionGateMiddleware is registered in start() after bot.me() resolves
         self.dp.message.middleware(RoleMiddleware())
         self.dp.callback_query.middleware(RoleMiddleware())
 
@@ -59,7 +63,7 @@ class TelegramAdapter(PlatformAdapter):
         self.dp.include_router(role_router)            # /team, /invite, /myrole
         self.dp.include_router(budget_router)          # /budget, /expenses
         self.dp.include_router(ai_router)              # /ask, /parse, voice/photo handlers
-        self.dp.include_router(report_router)          # /report, /status, quick commands (LAST — has catch-all)
+        self.dp.include_router(report_router)          # /report, /status, quick cmds (LAST)
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""
@@ -110,6 +114,15 @@ class TelegramAdapter(PlatformAdapter):
     async def start(self) -> None:
         """Start polling for Telegram updates and launch the scheduler."""
         logger.info("Starting Telegram bot (polling mode)...")
+
+        # Resolve bot identity for mention-gating
+        me = await self.bot.me()
+        logger.info("Bot identity: @%s (id=%d)", me.username, me.id)
+
+        # Register mention-gate as OUTER middleware (runs before RoleMiddleware)
+        self.dp.message.outer_middleware(
+            MentionGateMiddleware(bot_id=me.id, bot_username=me.username or "")
+        )
 
         # Set up command menus for different chat types
         await self._set_command_scopes()

@@ -17,24 +17,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.services.ai_client import chat_completion, is_ai_configured
 from bot.services.embedding_service import search_similar
+from bot.services.skills_loader import get_skill_prompt
 
 logger = logging.getLogger(__name__)
 
 
-# ── System prompt for RAG ────────────────────────────────────
+# ── System prompt for RAG (fallback if skill file not found) ─
 
-_RAG_SYSTEM_PROMPT = """Ты — умный помощник по ремонту квартир. Ты помогаешь клиентам, прорабам и дизайнерам управлять ремонтом.
+_RAG_SYSTEM_PROMPT_FALLBACK = (
+    "Ты — умный помощник по ремонту квартир. "
+    "Ты помогаешь клиентам, прорабам и дизайнерам "
+    "управлять ремонтом.\n\n"
+    "Тебе доступен контекст проекта (этапы, бюджет, "
+    "сообщения). Используй его для ответа.\n\n"
+    "Правила:\n"
+    "1. Отвечай на русском языке\n"
+    "2. Будь кратким и по делу\n"
+    "3. Если в контексте нет информации для ответа — "
+    "честно скажи об этом\n"
+    "4. Если вопрос касается бюджета — указывай "
+    "конкретные суммы из контекста\n"
+    "5. Если вопрос касается сроков — указывай "
+    "конкретные даты\n"
+    "6. Не придумывай информацию, которой нет "
+    "в контексте\n"
+    "7. Форматируй ответ для мессенджера "
+    "(короткие абзацы, без длинных таблиц)"
+)
 
-Тебе доступен контекст проекта (этапы, бюджет, сообщения). Используй его для ответа.
 
-Правила:
-1. Отвечай на русском языке
-2. Будь кратким и по делу
-3. Если в контексте нет информации для ответа — честно скажи об этом
-4. Если вопрос касается бюджета — указывай конкретные суммы из контекста
-5. Если вопрос касается сроков — указывай конкретные даты
-6. Не придумывай информацию, которой нет в контексте
-7. Форматируй ответ для мессенджера (короткие абзацы, без длинных таблиц)"""
+def _get_rag_system_prompt() -> str:
+    """Load RAG system prompt from skill file, falling back to built-in."""
+    prompt = get_skill_prompt("rag-assistant")
+    if prompt:
+        return prompt
+    logger.debug("Skill 'rag-assistant' not found, using fallback prompt")
+    return _RAG_SYSTEM_PROMPT_FALLBACK
 
 
 # ── Public API ────────────────────────────────────────────────
@@ -101,7 +119,7 @@ async def ask_project(
 
     # 3. Generate answer
     messages = [
-        {"role": "system", "content": _RAG_SYSTEM_PROMPT},
+        {"role": "system", "content": _get_rag_system_prompt()},
         {
             "role": "user",
             "content": (
