@@ -29,7 +29,7 @@ from bot.adapters.telegram.formatters import format_project_summary
 from bot.core.project_service import create_renovation_project
 from bot.adapters.telegram.fsm_states import ProjectCreation
 from bot.db.models import RenovationType
-from bot.db.repositories import get_user_by_telegram_id
+from bot.db.repositories import get_user_by_telegram_id, get_project_by_telegram_chat_id
 from bot.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -402,6 +402,17 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext) -> None:
             return
 
         # Create the project
+        # Check if this chat already has a project linked
+        chat_id = callback.message.chat.id if callback.message else None  # type: ignore[union-attr]
+        platform_chat_id: str | None = str(chat_id) if chat_id else None
+
+        if chat_id:
+            existing = await get_project_by_telegram_chat_id(session, chat_id)
+            if existing:
+                # Private chat already linked — create project without binding chat
+                # The user can link it to a group chat later via /invite
+                platform_chat_id = None
+
         project = await create_renovation_project(
             session,
             owner_user_id=user.id,
@@ -411,7 +422,7 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext) -> None:
             renovation_type=RenovationType(data["renovation_type"]),
             total_budget=data.get("total_budget"),
             platform="telegram",
-            platform_chat_id=str(callback.message.chat.id) if callback.message else None,  # type: ignore[union-attr]
+            platform_chat_id=platform_chat_id,
             custom_items=data.get("custom_items") or None,
         )
 
