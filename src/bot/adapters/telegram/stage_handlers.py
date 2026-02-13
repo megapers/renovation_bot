@@ -22,7 +22,6 @@ from bot.adapters.telegram.keyboards import (
     back_to_stage_keyboard,
     date_method_keyboard,
     launch_keyboard,
-    project_select_keyboard,
     stage_actions_keyboard,
     stage_status_keyboard,
     stages_list_keyboard,
@@ -39,13 +38,12 @@ from bot.core.stage_service import (
     validate_launch_readiness,
 )
 from bot.adapters.telegram.fsm_states import StageSetup
+from bot.adapters.telegram.project_resolver import resolve_project
 from bot.db.repositories import (
     create_sub_stages_bulk,
     get_previous_stage,
     get_stage_with_substages,
     get_stages_for_project,
-    get_user_by_telegram_id,
-    get_user_projects,
     launch_project,
     update_stage,
 )
@@ -58,27 +56,6 @@ router = Router(name="stage_setup")
 # ═══════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════
-
-
-async def _ensure_user(message: Message | CallbackQuery) -> int | None:
-    """
-    Get the internal user ID from a Telegram message/callback.
-
-    Returns None and sends error if user not found.
-    """
-    tg_user = message.from_user if isinstance(message, Message) else message.from_user
-    if tg_user is None:
-        return None
-
-    async with async_session_factory() as session:
-        user = await get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            target = message if isinstance(message, Message) else message.message
-            await target.answer(  # type: ignore[union-attr]
-                "❌ Вы не зарегистрированы. Отправьте /start сначала."
-            )
-            return None
-        return user.id
 
 
 async def _show_stages_list(
@@ -138,38 +115,17 @@ async def cmd_stages(message: Message, state: FSMContext) -> None:
     """
     /stages — show project stages.
 
-    If the user has one project, show its stages.
-    If multiple, show a project selection keyboard.
+    Group chat: auto-resolves to linked project.
+    Private chat: picker if multiple projects.
     """
     await state.clear()
-
-    tg_user = message.from_user
-    if tg_user is None:
-        return
-
-    async with async_session_factory() as session:
-        user = await get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer("❌ Вы не зарегистрированы. Отправьте /start сначала.")
-            return
-
-        projects = await get_user_projects(session, user.id)
-
-    if not projects:
-        await message.answer(
-            "У вас нет активных проектов.\n"
-            "Создайте проект командой /newproject"
-        )
-        return
-
-    if len(projects) == 1:
-        await _show_stages_list(message, state, projects[0].id)
-    else:
-        await state.set_state(StageSetup.selecting_project)
-        await message.answer(
-            "Выберите проект:",
-            reply_markup=project_select_keyboard(projects),
-        )
+    resolved = await resolve_project(
+        message, state,
+        intent="stages",
+        picker_state=StageSetup.selecting_project,
+    )
+    if resolved:
+        await _show_stages_list(message, state, resolved.id)
 
 
 @router.message(Command("launch"))
@@ -177,39 +133,17 @@ async def cmd_launch(message: Message, state: FSMContext) -> None:
     """
     /launch — show project launch summary and confirmation.
 
-    Same project selection logic as /stages.
+    Group chat: auto-resolves to linked project.
+    Private chat: picker if multiple projects.
     """
     await state.clear()
-
-    tg_user = message.from_user
-    if tg_user is None:
-        return
-
-    async with async_session_factory() as session:
-        user = await get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer("❌ Вы не зарегистрированы. Отправьте /start сначала.")
-            return
-
-        projects = await get_user_projects(session, user.id)
-
-    if not projects:
-        await message.answer(
-            "У вас нет активных проектов.\n"
-            "Создайте проект командой /newproject"
-        )
-        return
-
-    # For launch, pick the first project (or show selection if multiple)
-    if len(projects) == 1:
-        await _show_launch_screen(message, state, projects[0].id)
-    else:
-        await state.set_state(StageSetup.selecting_project)
-        await state.update_data(intent="launch")
-        await message.answer(
-            "Выберите проект для запуска:",
-            reply_markup=project_select_keyboard(projects),
-        )
+    resolved = await resolve_project(
+        message, state,
+        intent="launch",
+        picker_state=StageSetup.selecting_project,
+    )
+    if resolved:
+        await _show_launch_screen(message, state, resolved.id)
 
 
 async def _show_launch_screen(

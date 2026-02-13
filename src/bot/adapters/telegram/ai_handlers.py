@@ -39,32 +39,41 @@ router = Router(name="ai_handlers")
 # ═══════════════════════════════════════════════════════════════
 
 
-async def _get_user_and_project(message: TgMessage):
-    """Get internal user and active project from a Telegram message."""
+async def _resolve_project_for_storage(
+    message: TgMessage,
+) -> tuple[int | None, int | None]:
+    """
+    Resolve project and user for message storage (voice/photo/text).
+
+    This is a lightweight resolver that does NOT show a picker.
+    For storage, we silently pick the best project:
+      - Group chat → linked project
+      - Private chat → first (newest) project
+
+    Returns (user_id, project_id) — either can be None.
+    """
     tg_user = message.from_user
     if tg_user is None:
-        return None, None, None
+        return None, None
 
     async with async_session_factory() as session:
         user = await repo.get_user_by_telegram_id(session, tg_user.id)
         if user is None:
-            return None, None, session
+            return None, None
 
-        # Get user's projects
-        projects = await repo.get_user_projects(session, user.id)
-        if not projects:
-            return user, None, session
-
-        # If in a group chat linked to a project, use that
+        # Group chat: use linked project
         if message.chat.type in ("group", "supergroup"):
             project = await repo.get_project_by_telegram_chat_id(
                 session, message.chat.id
             )
-            if project:
-                return user, project, session
+            return user.id, project.id if project else None
 
-        # Default to first active project
-        return user, projects[0], session
+        # Private chat: use first (newest) project
+        projects = await repo.get_user_projects(session, user.id)
+        if projects:
+            return user.id, projects[0].id
+
+        return user.id, None
 
 
 async def _store_and_embed_message(
@@ -152,29 +161,23 @@ async def cmd_ask(message: TgMessage, state: FSMContext) -> None:
         )
         return
 
+    # Resolve project (group → linked, private → single/first)
+    from bot.adapters.telegram.project_resolver import resolve_project
+    from bot.adapters.telegram.fsm_states import ReportSelection
+
+    resolved = await resolve_project(
+        message, state,
+        intent="ask",
+        picker_state=ReportSelection.selecting_project,
+    )
+    if not resolved:
+        return
+
     async with async_session_factory() as session:
-        user = await repo.get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer("Пожалуйста, сначала отправьте /start")
-            return
-
-        # Find project
-        projects = await repo.get_user_projects(session, user.id)
-        if not projects:
-            await message.answer("У вас нет активных проектов.")
-            return
-
-        # Use project linked to chat, or first project
-        project = None
-        if message.chat.type in ("group", "supergroup"):
-            project = await repo.get_project_by_telegram_chat_id(
-                session, message.chat.id
-            )
-        if not project:
-            project = projects[0]
-
         # Build project context
-        report_data = await repo.get_project_full_report_data(session, project.id)
+        report_data = await repo.get_project_full_report_data(
+            session, resolved.id
+        )
         project_ctx = build_project_context(report_data)
 
         # Send thinking indicator
@@ -183,7 +186,7 @@ async def cmd_ask(message: TgMessage, state: FSMContext) -> None:
         # Get RAG answer
         answer = await ask_project(
             session,
-            project_id=project.id,
+            project_id=resolved.id,
             question=question,
             project_context=project_ctx,
         )
@@ -291,25 +294,23 @@ async def cmd_backfill(message: TgMessage, state: FSMContext) -> None:
         await message.answer("⚠️ AI-сервис не настроен.")
         return
 
+    # Resolve project
+    from bot.adapters.telegram.project_resolver import resolve_project
+    from bot.adapters.telegram.fsm_states import ReportSelection
+
+    resolved = await resolve_project(
+        message, state,
+        intent="backfill",
+        picker_state=ReportSelection.selecting_project,
+    )
+    if not resolved:
+        return
+
     async with async_session_factory() as session:
-        user = await repo.get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer("Пожалуйста, сначала отправьте /start")
-            return
-
-        projects = await repo.get_user_projects(session, user.id)
-        if not projects:
-            await message.answer("У вас нет активных проектов.")
-            return
-
-        project = projects[0]
-        if message.chat.type in ("group", "supergroup"):
-            p = await repo.get_project_by_telegram_chat_id(session, message.chat.id)
-            if p:
-                project = p
-
         # Check role — only owners can backfill
-        roles = await repo.get_user_roles_in_project(session, user.id, project.id)
+        roles = await repo.get_user_roles_in_project(
+            session, resolved.user_id, resolved.id
+        )
         from bot.db.models import RoleType
         if RoleType.OWNER not in roles:
             await message.answer("⛔ Только владелец проекта может запустить бэкфилл.")
@@ -317,7 +318,9 @@ async def cmd_backfill(message: TgMessage, state: FSMContext) -> None:
 
         status_msg = await message.answer("⏳ Обработка исторических сообщений...")
 
-        messages = await repo.get_messages_without_embeddings(session, project.id)
+        messages = await repo.get_messages_without_embeddings(
+            session, resolved.id
+        )
         if not messages:
             await status_msg.edit_text("✅ Все сообщения уже обработаны.")
             return
@@ -332,7 +335,7 @@ async def cmd_backfill(message: TgMessage, state: FSMContext) -> None:
             if canonical:
                 await embed_and_store(
                     session,
-                    project_id=project.id,
+                    project_id=resolved.id,
                     content=canonical,
                     metadata={
                         "source": "backfill",
@@ -375,24 +378,7 @@ async def handle_voice_message(message: TgMessage) -> None:
     if voice is None:
         return
 
-    async with async_session_factory() as session:
-        user = await repo.get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            return
-
-        # Find project
-        project = None
-        project_id = None
-        if message.chat.type in ("group", "supergroup"):
-            project = await repo.get_project_by_telegram_chat_id(
-                session, message.chat.id
-            )
-        if not project:
-            projects = await repo.get_user_projects(session, user.id)
-            if projects:
-                project = projects[0]
-        if project:
-            project_id = project.id
+    user_id, project_id = await _resolve_project_for_storage(message)
 
     # Download and transcribe
     file_id = voice.file_id
@@ -417,7 +403,7 @@ async def handle_voice_message(message: TgMessage) -> None:
     # Store the message
     await _store_and_embed_message(
         project_id=project_id,
-        user_id=user.id if user else None,
+        user_id=user_id,
         chat_id=str(message.chat.id),
         message_id=str(message.message_id),
         message_type=MessageType.VOICE,
@@ -466,23 +452,7 @@ async def handle_photo_message(message: TgMessage) -> None:
     photo = photos[-1]
     caption = message.caption
 
-    async with async_session_factory() as session:
-        user = await repo.get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            return
-
-        project = None
-        project_id = None
-        if message.chat.type in ("group", "supergroup"):
-            project = await repo.get_project_by_telegram_chat_id(
-                session, message.chat.id
-            )
-        if not project:
-            projects = await repo.get_user_projects(session, user.id)
-            if projects:
-                project = projects[0]
-        if project:
-            project_id = project.id
+    user_id, project_id = await _resolve_project_for_storage(message)
 
     # Download and describe
     file_id = photo.file_id
@@ -514,7 +484,7 @@ async def handle_photo_message(message: TgMessage) -> None:
     # Store the message
     await _store_and_embed_message(
         project_id=project_id,
-        user_id=user.id if user else None,
+        user_id=user_id,
         chat_id=str(message.chat.id),
         message_id=str(message.message_id),
         message_type=MessageType.IMAGE,
@@ -566,22 +536,7 @@ async def store_text_message(message: TgMessage) -> None:
     if len(text.strip()) < 3:
         return
 
-    async with async_session_factory() as session:
-        user = await repo.get_user_by_telegram_id(session, tg_user.id)
-        user_id = user.id if user else None
-
-        project = None
-        project_id = None
-        if message.chat.type in ("group", "supergroup"):
-            project = await repo.get_project_by_telegram_chat_id(
-                session, message.chat.id
-            )
-        if not project and user:
-            projects = await repo.get_user_projects(session, user_id)
-            if projects:
-                project = projects[0]
-        if project:
-            project_id = project.id
+    user_id, project_id = await _resolve_project_for_storage(message)
 
     await _store_and_embed_message(
         project_id=project_id,

@@ -12,15 +12,17 @@ are associated with the linked project.
 """
 
 import logging
+import re
 
 from aiogram import F, Router
-from aiogram.filters import Command, ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
+from aiogram.filters import Command, CommandStart, ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 
 from bot.adapters.telegram.keyboards import project_select_keyboard
 from bot.db.repositories import (
     get_project_by_telegram_chat_id,
+    get_project_with_stages,
     get_user_by_telegram_id,
     get_user_projects,
     link_project_to_chat,
@@ -45,8 +47,8 @@ async def bot_added_to_group(event: ChatMemberUpdated) -> None:
     """
     Handle the bot being added to a group chat.
 
-    Send a welcome message and instructions to link the group
-    to a renovation project.
+    If added via a deep link (?startgroup=proj_N), auto-link to that project.
+    Otherwise, send instructions to use /link.
     """
     chat = event.chat
     logger.info(
@@ -78,6 +80,79 @@ async def bot_removed_from_group(event: ChatMemberUpdated) -> None:
         event.chat.id,
         event.from_user.id,
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# Deep link — /start proj_N in group
+# ═══════════════════════════════════════════════════════════════
+
+_PROJ_DEEPLINK_RE = re.compile(r"^proj_(\d+)$")
+
+
+@router.message(
+    CommandStart(deep_link=True),
+    F.chat.type.in_({"group", "supergroup"}),
+)
+async def handle_startgroup_deeplink(message: Message) -> None:
+    """
+    Handle /start with deep link parameter in a group chat.
+
+    When the bot is added to a group via t.me/bot?startgroup=proj_N,
+    Telegram sends "/start proj_N" in the group. This handler
+    auto-links the group to the project.
+    """
+    # Extract project ID from deep link
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        return
+
+    payload = parts[1]
+    match = _PROJ_DEEPLINK_RE.match(payload)
+    if not match:
+        return
+
+    project_id = int(match.group(1))
+    chat_id = message.chat.id
+
+    async with async_session_factory() as session:
+        # Check if already linked
+        existing = await get_project_by_telegram_chat_id(session, chat_id)
+        if existing:
+            await message.answer(
+                f"ℹ️ Эта группа уже привязана к проекту "
+                f"<b>{existing.name}</b>."
+            )
+            return
+
+        # Verify the project exists
+        project = await get_project_with_stages(session, project_id)
+        if project is None:
+            await message.answer("❌ Проект не найден.")
+            return
+
+        # Link the project
+        project = await link_project_to_chat(session, project_id, chat_id)
+        await session.commit()
+
+    if project:
+        await message.answer(
+            f"✅ Группа автоматически привязана к проекту "
+            f"<b>{project.name}</b>!\n\n"
+            "Теперь бот будет отслеживать сообщения в этой группе "
+            "для данного проекта.\n\n"
+            "Доступные команды:\n"
+            "/stages — этапы ремонта\n"
+            "/budget — бюджет\n"
+            "/team — команда проекта\n"
+            "/status — статус проекта"
+        )
+        logger.info(
+            "Deep link: linked project_id=%d to chat_id=%d",
+            project_id, chat_id,
+        )
+    else:
+        await message.answer("❌ Не удалось привязать проект.")
 
 
 # ═══════════════════════════════════════════════════════════════

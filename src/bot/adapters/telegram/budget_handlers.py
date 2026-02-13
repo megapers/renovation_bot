@@ -31,9 +31,9 @@ from bot.adapters.telegram.keyboards import (
     expense_type_keyboard,
     payment_stages_keyboard,
     payment_status_keyboard,
-    project_select_keyboard,
     skip_amount_keyboard,
 )
+from bot.adapters.telegram.project_resolver import resolve_project
 from bot.core.budget_service import (
     get_category_label,
     parse_expense_amount,
@@ -53,7 +53,6 @@ from bot.db.repositories import (
     get_stage_with_substages,
     get_unconfirmed_budget_items,
     get_user_by_telegram_id,
-    get_user_projects,
     update_stage_payment_status,
 )
 from bot.db.session import async_session_factory
@@ -130,33 +129,17 @@ async def cmd_budget(message: Message, state: FSMContext) -> None:
     """
     /budget — show project budget overview.
 
-    If the user has one project, show its budget.
-    If multiple, show a project selection keyboard.
+    Group chat: auto-resolves to linked project.
+    Private chat: picker if multiple projects.
     """
     await state.clear()
-    user_id = await _get_user_id(message)
-    if user_id is None:
-        return
-
-    async with async_session_factory() as session:
-        projects = await get_user_projects(session, user_id)
-
-    if not projects:
-        await message.answer(
-            "У вас нет активных проектов.\n"
-            "Создайте проект командой /newproject"
-        )
-        return
-
-    if len(projects) == 1:
-        await _show_budget_overview(message, state, projects[0].id)
-    else:
-        await state.set_state(BudgetManagement.selecting_project)
-        await state.update_data(intent="budget")
-        await message.answer(
-            "Выберите проект:",
-            reply_markup=project_select_keyboard(projects),
-        )
+    resolved = await resolve_project(
+        message, state,
+        intent="budget",
+        picker_state=BudgetManagement.selecting_project,
+    )
+    if resolved:
+        await _show_budget_overview(message, state, resolved.id)
 
 
 @router.message(Command("expenses"))
@@ -164,32 +147,17 @@ async def cmd_expenses(message: Message, state: FSMContext) -> None:
     """
     /expenses — start adding a new expense.
 
-    Same project selection logic, then directs to expense wizard.
+    Group chat: auto-resolves to linked project.
+    Private chat: picker if multiple projects.
     """
     await state.clear()
-    user_id = await _get_user_id(message)
-    if user_id is None:
-        return
-
-    async with async_session_factory() as session:
-        projects = await get_user_projects(session, user_id)
-
-    if not projects:
-        await message.answer(
-            "У вас нет активных проектов.\n"
-            "Создайте проект командой /newproject"
-        )
-        return
-
-    if len(projects) == 1:
-        await _start_expense_wizard(message, state, projects[0].id)
-    else:
-        await state.set_state(BudgetManagement.selecting_project)
-        await state.update_data(intent="expense")
-        await message.answer(
-            "Выберите проект для добавления расхода:",
-            reply_markup=project_select_keyboard(projects),
-        )
+    resolved = await resolve_project(
+        message, state,
+        intent="expense",
+        picker_state=BudgetManagement.selecting_project,
+    )
+    if resolved:
+        await _start_expense_wizard(message, state, resolved.id)
 
 
 # ═══════════════════════════════════════════════════════════════

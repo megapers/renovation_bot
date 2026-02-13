@@ -106,3 +106,17 @@ class BudgetManagement(StatesGroup):
     entering_prepayment = State()      # Prepayment amount
     viewing_item = State()             # Viewing a single budget item
     viewing_history = State()          # Viewing change history
+
+
+class ReportSelection(StatesGroup):
+    """
+    States for report command project selection.
+
+    Used by /report, /status, /nextstage, /deadline when the user
+    has multiple projects and needs to pick one.
+
+    FSM data keys used:
+      intent  — which report command triggered selection
+    """
+
+    selecting_project = State()        # Pick project (if user has multiple)

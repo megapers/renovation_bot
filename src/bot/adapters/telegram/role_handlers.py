@@ -24,10 +24,10 @@ from aiogram.types import CallbackQuery, Message
 from bot.adapters.telegram.filters import RequirePermission, RequireRegistration
 from bot.adapters.telegram.keyboards import (
     invite_confirm_keyboard,
-    project_select_keyboard,
     role_select_keyboard,
 )
 from bot.adapters.telegram.formatters import format_team_list
+from bot.adapters.telegram.project_resolver import resolve_project
 from bot.core.role_service import (
     ASSIGNABLE_ROLES,
     Permission,
@@ -42,7 +42,6 @@ from bot.db.repositories import (
     get_project_team,
     get_project_with_stages,
     get_user_by_telegram_id,
-    get_user_projects,
     get_user_roles_in_project,
     has_role_in_project,
     remove_role,
@@ -62,34 +61,13 @@ router = Router(name="role_management")
 async def cmd_team(message: Message, state: FSMContext) -> None:
     """Show the team for the current project."""
     await state.clear()
-    tg_user = message.from_user
-    if tg_user is None:
-        return
-
-    async with async_session_factory() as session:
-        user = await get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer("❌ Вы не зарегистрированы. Отправьте /start сначала.")
-            return
-
-        projects = await get_user_projects(session, user.id)
-
-    if not projects:
-        await message.answer(
-            "У вас нет активных проектов.\n"
-            "Создайте проект командой /newproject"
-        )
-        return
-
-    if len(projects) == 1:
-        await _show_team(message, projects[0].id)
-    else:
-        await state.set_state(RoleManagement.selecting_project)
-        await state.update_data(intent="team")
-        await message.answer(
-            "Выберите проект:",
-            reply_markup=project_select_keyboard(projects),
-        )
+    resolved = await resolve_project(
+        message, state,
+        intent="team",
+        picker_state=RoleManagement.selecting_project,
+    )
+    if resolved:
+        await _show_team(message, resolved.id)
 
 
 async def _show_team(target: Message, project_id: int) -> None:
@@ -123,31 +101,16 @@ async def _show_team(target: Message, project_id: int) -> None:
 async def cmd_myrole(message: Message, state: FSMContext) -> None:
     """Show the user's roles in the current project."""
     await state.clear()
-    tg_user = message.from_user
-    if tg_user is None:
-        return
-
-    async with async_session_factory() as session:
-        user = await get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer("❌ Вы не зарегистрированы. Отправьте /start сначала.")
-            return
-
-        projects = await get_user_projects(session, user.id)
-
-    if not projects:
-        await message.answer("У вас нет активных проектов.")
-        return
-
-    if len(projects) == 1:
-        await _show_myrole(message, user, projects[0].id)
-    else:
-        await state.set_state(RoleManagement.selecting_project)
-        await state.update_data(intent="myrole")
-        await message.answer(
-            "Выберите проект:",
-            reply_markup=project_select_keyboard(projects),
-        )
+    resolved = await resolve_project(
+        message, state,
+        intent="myrole",
+        picker_state=RoleManagement.selecting_project,
+    )
+    if resolved:
+        async with async_session_factory() as session:
+            user = await get_user_by_telegram_id(session, message.from_user.id)  # type: ignore[union-attr]
+        if user:
+            await _show_myrole(message, user, resolved.id)
 
 
 async def _show_myrole(target: Message, user: User, project_id: int) -> None:
@@ -177,28 +140,17 @@ async def _show_myrole(target: Message, user: User, project_id: int) -> None:
 async def cmd_invite(message: Message, state: FSMContext) -> None:
     """Start the invitation flow."""
     await state.clear()
-    tg_user = message.from_user
-    if tg_user is None:
-        return
-
-    async with async_session_factory() as session:
-        user = await get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer("❌ Вы не зарегистрированы. Отправьте /start сначала.")
-            return
-
-        projects = await get_user_projects(session, user.id)
-
-    if not projects:
-        await message.answer("У вас нет активных проектов.")
-        return
-
-    if len(projects) == 1:
-        project_id = projects[0].id
-
+    resolved = await resolve_project(
+        message, state,
+        intent="invite",
+        picker_state=RoleManagement.selecting_project,
+    )
+    if resolved:
         # Check permission
         async with async_session_factory() as session:
-            roles = await get_user_roles_in_project(session, user.id, project_id)
+            roles = await get_user_roles_in_project(
+                session, resolved.user_id, resolved.id
+            )
         from bot.core.role_service import has_permission
         if not has_permission(roles, Permission.INVITE_MEMBER):
             await message.answer(
@@ -207,15 +159,8 @@ async def cmd_invite(message: Message, state: FSMContext) -> None:
             )
             return
 
-        await state.update_data(project_id=project_id)
+        await state.update_data(project_id=resolved.id)
         await _ask_for_role(message, state)
-    else:
-        await state.set_state(RoleManagement.selecting_project)
-        await state.update_data(intent="invite")
-        await message.answer(
-            "Выберите проект:",
-            reply_markup=project_select_keyboard(projects),
-        )
 
 
 # ── Project selection (shared across /team, /myrole, /invite) ──

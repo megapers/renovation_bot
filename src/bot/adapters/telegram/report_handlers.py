@@ -27,7 +27,8 @@ from bot.adapters.telegram.formatters import (
     format_status_report,
     format_weekly_report,
 )
-from bot.adapters.telegram.keyboards import project_select_keyboard
+from bot.adapters.telegram.fsm_states import ReportSelection
+from bot.adapters.telegram.project_resolver import resolve_project
 from bot.core.report_service import (
     build_deadline_report,
     build_next_stage_info,
@@ -48,55 +49,20 @@ router = Router(name="reports")
 # ═══════════════════════════════════════════════════════════════
 
 
-async def _get_user(message: Message):
-    """Get the internal DB user from a Telegram message. Returns (user, None) or (None, error_sent)."""
-    tg_user = message.from_user
-    if tg_user is None:
-        return None
-
-    async with async_session_factory() as session:
-        user = await repo.get_user_by_telegram_id(session, tg_user.id)
-        if user is None:
-            await message.answer(
-                "❌ Вы не зарегистрированы. Отправьте /start сначала."
-            )
-            return None
-        return user
-
-
-async def _resolve_project(message: Message, state: FSMContext, intent: str):
-    """
-    Resolve to a single project. If user has one project, return its ID.
-    If multiple, show selection and return None (handler will be called back).
-    """
-    user = await _get_user(message)
-    if user is None:
-        return None
-
-    async with async_session_factory() as session:
-        projects = await repo.get_user_projects(session, user.id)
-
-    if not projects:
-        await message.answer(
-            "У вас нет активных проектов.\n"
-            "Создайте проект командой /newproject"
-        )
-        return None
-
-    if len(projects) == 1:
-        await state.update_data(
-            project_id=projects[0].id,
-            user_id=user.id,
-        )
-        return projects[0].id
-
-    # Multiple projects — ask user to pick
-    await state.set_state(None)
-    await state.update_data(report_intent=intent, user_id=user.id)
-    await message.answer(
-        "Выберите проект:",
-        reply_markup=project_select_keyboard(projects),
+async def _resolve_for_report(
+    message: Message,
+    state: FSMContext,
+    intent: str,
+) -> int | None:
+    """Resolve project for report commands using the shared resolver."""
+    resolved = await resolve_project(
+        message, state,
+        intent=intent,
+        picker_state=ReportSelection.selecting_project,
     )
+    if resolved:
+        await state.update_data(user_id=resolved.user_id)
+        return resolved.id
     return None
 
 
@@ -109,7 +75,7 @@ async def _resolve_project(message: Message, state: FSMContext, intent: str):
 async def cmd_report(message: Message, state: FSMContext) -> None:
     """/report — generate a full weekly-style report."""
     await state.clear()
-    project_id = await _resolve_project(message, state, "report")
+    project_id = await _resolve_for_report(message, state, "report")
     if project_id is not None:
         await _send_report(message, project_id)
 
@@ -146,7 +112,7 @@ async def _send_report(target: Message, project_id: int) -> None:
 async def cmd_status(message: Message, state: FSMContext) -> None:
     """/status — quick project status overview."""
     await state.clear()
-    project_id = await _resolve_project(message, state, "status")
+    project_id = await _resolve_for_report(message, state, "status")
     if project_id is not None:
         await _send_status(message, project_id)
 
@@ -175,7 +141,7 @@ async def _send_status(target: Message, project_id: int) -> None:
 async def cmd_next_stage(message: Message, state: FSMContext) -> None:
     """/nextstage — show current and next stage."""
     await state.clear()
-    project_id = await _resolve_project(message, state, "next_stage")
+    project_id = await _resolve_for_report(message, state, "next_stage")
     if project_id is not None:
         await _send_next_stage(message, project_id)
 
@@ -207,7 +173,7 @@ async def _send_next_stage(target: Message, project_id: int) -> None:
 async def cmd_deadline(message: Message, state: FSMContext) -> None:
     """/deadline — deadline-focused report."""
     await state.clear()
-    project_id = await _resolve_project(message, state, "deadline")
+    project_id = await _resolve_for_report(message, state, "deadline")
     if project_id is not None:
         await _send_deadline(message, project_id)
 
@@ -236,18 +202,40 @@ async def _send_deadline(target: Message, project_id: int) -> None:
 async def cmd_my_stage(message: Message, state: FSMContext) -> None:
     """/mystage — show stages assigned to current user."""
     await state.clear()
-    user = await _get_user(message)
-    if user is None:
+
+    # In group chat, resolve to linked project
+    # In private chat, show all projects
+    tg_user = message.from_user
+    if tg_user is None:
         return
 
     async with async_session_factory() as session:
+        user = await repo.get_user_by_telegram_id(session, tg_user.id)
+        if user is None:
+            await message.answer("❌ Вы не зарегистрированы. Отправьте /start сначала.")
+            return
+
+        # Group chat: only show stages for the linked project
+        if message.chat.type in ("group", "supergroup"):
+            project = await repo.get_project_by_telegram_chat_id(
+                session, message.chat.id
+            )
+            if project:
+                await _send_my_stages(message, project.id, user.id)
+            else:
+                await message.answer(
+                    "❌ Эта группа не привязана к проекту.\n"
+                    "Используйте /link чтобы привязать группу к проекту."
+                )
+            return
+
+        # Private chat: show stages across all projects
         projects = await repo.get_user_projects(session, user.id)
 
     if not projects:
         await message.answer("У вас нет активных проектов.")
         return
 
-    # Show stages across all projects (or first project)
     for project in projects:
         await _send_my_stages(message, project.id, user.id)
 
@@ -292,7 +280,10 @@ async def _send_my_stages(
 # ═══════════════════════════════════════════════════════════════
 
 
-@router.callback_query(F.data.startswith("prjsel:"))
+@router.callback_query(
+    ReportSelection.selecting_project,
+    F.data.startswith("prjsel:"),
+)
 async def report_select_project(
     callback: CallbackQuery,
     state: FSMContext,
@@ -300,16 +291,13 @@ async def report_select_project(
     """
     Handle project selection for report commands.
 
-    Only fires if state has report_intent (set by _resolve_project).
+    Only fires when in ReportSelection.selecting_project state.
     """
-    data = await state.get_data()
-    intent = data.get("report_intent")
-    if intent is None:
-        # Not a report selection — let other routers handle it
-        return
-
     await callback.answer()
     project_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    data = await state.get_data()
+    intent = data.get("intent")
+    await state.clear()
 
     dispatch = {
         "report": _send_report,
@@ -321,9 +309,19 @@ async def report_select_project(
     handler = dispatch.get(intent)
     if handler:
         await handler(callback.message, project_id)  # type: ignore[arg-type]
+        return
 
-    # Clean up state
-    await state.update_data(report_intent=None)
+    # AI intents that share ReportSelection picker state
+    if intent == "ask":
+        await callback.message.answer(  # type: ignore[union-attr]
+            "✅ Проект выбран. Теперь отправьте /ask &lt;ваш вопрос&gt;"
+        )
+    elif intent == "backfill":
+        from bot.adapters.telegram.ai_handlers import cmd_backfill
+        # Re-trigger backfill with the selected project context
+        await callback.message.answer(  # type: ignore[union-attr]
+            "✅ Проект выбран. Отправьте /backfill снова."
+        )
 
 
 # ═══════════════════════════════════════════════════════════════

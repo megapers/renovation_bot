@@ -15,7 +15,7 @@ import logging
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.adapters.telegram.keyboards import (
     confirm_keyboard,
@@ -430,9 +430,36 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext) -> None:
 
     # Show the final summary
     summary = format_project_summary(project)
-    await callback.message.answer(  # type: ignore[union-attr]
-        f"✅ <b>Проект создан!</b>\n\n{summary}"
-    )
+
+    # Build deep link for adding bot to a group with this project
+    from aiogram import Bot
+    bot = Bot.get_current()
+    bot_info = await bot.get_me() if bot else None
+    bot_username = bot_info.username if bot_info else None
+
+    reply_text = f"✅ <b>Проект создан!</b>\n\n{summary}"
+
+    if bot_username and callback.message.chat.type == "private":  # type: ignore[union-attr]
+        # Show "Add to group" button only in private chat
+        reply_text += (
+            "\n\n👥 Чтобы привязать проект к рабочей группе, "
+            "нажмите кнопку ниже или добавьте бота в группу и "
+            "отправьте /link"
+        )
+        deep_link_url = (
+            f"https://t.me/{bot_username}?startgroup=proj_{project.id}"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="👥 Добавить бота в группу",
+                url=deep_link_url,
+            )],
+        ])
+        await callback.message.answer(  # type: ignore[union-attr]
+            reply_text, reply_markup=keyboard,
+        )
+    else:
+        await callback.message.answer(reply_text)  # type: ignore[union-attr]
 
     await state.clear()
     logger.info("Project created via Telegram: %s (id=%d) by user tg_id=%d", project.name, project.id, tg_user.id)

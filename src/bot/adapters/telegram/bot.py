@@ -10,6 +10,7 @@ import logging
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 
 from bot.adapters.base import OutgoingMessage, PlatformAdapter
 from bot.adapters.telegram.ai_handlers import router as ai_router
@@ -110,6 +111,9 @@ class TelegramAdapter(PlatformAdapter):
         """Start polling for Telegram updates and launch the scheduler."""
         logger.info("Starting Telegram bot (polling mode)...")
 
+        # Set up command menus for different chat types
+        await self._set_command_scopes()
+
         # Start the background scheduler for deadline checks, reminders, etc.
         async def _send_notification(notification: Notification) -> None:
             await deliver_notification(notification, self.bot)
@@ -118,6 +122,50 @@ class TelegramAdapter(PlatformAdapter):
         logger.info("Background scheduler started")
 
         await self.dp.start_polling(self.bot)
+
+    async def _set_command_scopes(self) -> None:
+        """Register different command menus for private and group chats."""
+        # Private chat commands
+        private_commands = [
+            BotCommand(command="newproject", description="Создать новый проект"),
+            BotCommand(command="myprojects", description="Мои проекты"),
+            BotCommand(command="stages", description="Этапы ремонта"),
+            BotCommand(command="budget", description="Бюджет проекта"),
+            BotCommand(command="expenses", description="Добавить расход"),
+            BotCommand(command="report", description="Отчёт по проекту"),
+            BotCommand(command="status", description="Статус проекта"),
+            BotCommand(command="team", description="Команда проекта"),
+            BotCommand(command="invite", description="Пригласить участника"),
+            BotCommand(command="myrole", description="Моя роль"),
+            BotCommand(command="ask", description="Задать вопрос AI"),
+            BotCommand(command="launch", description="Запустить проект"),
+        ]
+
+        # Group chat commands
+        group_commands = [
+            BotCommand(command="link", description="Привязать группу к проекту"),
+            BotCommand(command="stages", description="Этапы ремонта"),
+            BotCommand(command="budget", description="Бюджет проекта"),
+            BotCommand(command="expenses", description="Добавить расход"),
+            BotCommand(command="status", description="Статус проекта"),
+            BotCommand(command="report", description="Отчёт по проекту"),
+            BotCommand(command="team", description="Команда проекта"),
+            BotCommand(command="myrole", description="Моя роль"),
+            BotCommand(command="ask", description="Задать вопрос AI"),
+        ]
+
+        try:
+            await self.bot.set_my_commands(
+                private_commands,
+                scope=BotCommandScopeAllPrivateChats(),
+            )
+            await self.bot.set_my_commands(
+                group_commands,
+                scope=BotCommandScopeAllGroupChats(),
+            )
+            logger.info("Command scopes registered")
+        except Exception as e:
+            logger.warning("Failed to set command scopes: %s", e)
 
     async def stop(self) -> None:
         """Shut down the Telegram bot and scheduler gracefully."""
