@@ -12,11 +12,13 @@ Flow:
 
 import logging
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from bot.adapters.telegram.formatters import format_project_summary
+from bot.adapters.telegram.fsm_states import ProjectCreation
 from bot.adapters.telegram.keyboards import (
     confirm_keyboard,
     coordinator_keyboard,
@@ -25,11 +27,9 @@ from bot.adapters.telegram.keyboards import (
     skip_keyboard,
     yes_no_keyboard,
 )
-from bot.adapters.telegram.formatters import format_project_summary
 from bot.core.project_service import create_renovation_project
-from bot.adapters.telegram.fsm_states import ProjectCreation
 from bot.db.models import RenovationType
-from bot.db.repositories import get_user_by_telegram_id, get_project_by_telegram_chat_id
+from bot.db.repositories import get_project_by_telegram_chat_id, get_user_by_telegram_id
 from bot.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -384,7 +384,7 @@ async def _show_confirmation(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(ProjectCreation.confirming, F.data == "confirm:yes")
-async def confirm_project(callback: CallbackQuery, state: FSMContext) -> None:
+async def confirm_project(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     """Create the project in the database."""
     await callback.answer("Создаю проект...")
     data = await state.get_data()
@@ -432,9 +432,7 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext) -> None:
     summary = format_project_summary(project)
 
     # Build deep link for adding bot to a group with this project
-    from aiogram import Bot
-    bot = Bot.get_current()
-    bot_info = await bot.get_me() if bot else None
+    bot_info = await bot.get_me()
     bot_username = bot_info.username if bot_info else None
 
     reply_text = f"✅ <b>Проект создан!</b>\n\n{summary}"

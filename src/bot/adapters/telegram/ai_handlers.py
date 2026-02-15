@@ -16,7 +16,7 @@ messages table and embedded for semantic search.
 
 import logging
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message as TgMessage
@@ -162,8 +162,8 @@ async def cmd_ask(message: TgMessage, state: FSMContext) -> None:
         return
 
     # Resolve project (group → linked, private → single/first)
-    from bot.adapters.telegram.project_resolver import resolve_project
     from bot.adapters.telegram.fsm_states import ReportSelection
+    from bot.adapters.telegram.project_resolver import resolve_project
 
     resolved = await resolve_project(
         message, state,
@@ -238,7 +238,7 @@ async def cmd_parse(message: TgMessage, state: FSMContext) -> None:
         return
 
     # Format the parsed result
-    parts: list[str] = [f"📊 <b>Результат анализа</b>\n"]
+    parts: list[str] = ["📊 <b>Результат анализа</b>\n"]
     parts.append(f"Намерение: <b>{result.intent}</b>")
 
     if result.raw_summary:
@@ -295,8 +295,8 @@ async def cmd_backfill(message: TgMessage, state: FSMContext) -> None:
         return
 
     # Resolve project
-    from bot.adapters.telegram.project_resolver import resolve_project
     from bot.adapters.telegram.fsm_states import ReportSelection
+    from bot.adapters.telegram.project_resolver import resolve_project
 
     resolved = await resolve_project(
         message, state,
@@ -361,7 +361,7 @@ async def cmd_backfill(message: TgMessage, state: FSMContext) -> None:
 
 
 @router.message(F.voice)
-async def handle_voice_message(message: TgMessage) -> None:
+async def handle_voice_message(message: TgMessage, bot: Bot) -> None:
     """
     Handle incoming voice messages.
 
@@ -386,17 +386,14 @@ async def handle_voice_message(message: TgMessage) -> None:
 
     if is_ai_configured():
         try:
-            from aiogram import Bot
-            bot = Bot.get_current()
-            if bot:
-                file = await bot.get_file(file_id)
-                if file.file_path:
-                    result = await bot.download_file(file.file_path)
-                    if result:
-                        audio_bytes = result.read()
-                        transcribed = await process_voice(
-                            audio_bytes, filename="voice.ogg"
-                        )
+            file = await bot.get_file(file_id)
+            if file.file_path:
+                result = await bot.download_file(file.file_path)
+                if result:
+                    audio_bytes = result.read()
+                    transcribed = await process_voice(
+                        audio_bytes, filename="voice.ogg"
+                    )
         except Exception as e:
             logger.error("Voice download/transcription failed: %s", e)
 
@@ -430,7 +427,7 @@ async def handle_voice_message(message: TgMessage) -> None:
 
 
 @router.message(F.photo)
-async def handle_photo_message(message: TgMessage) -> None:
+async def handle_photo_message(message: TgMessage, bot: Bot) -> None:
     """
     Handle incoming photo messages.
 
@@ -460,17 +457,14 @@ async def handle_photo_message(message: TgMessage) -> None:
 
     if is_ai_configured():
         try:
-            from aiogram import Bot
-            bot = Bot.get_current()
-            if bot:
-                file = await bot.get_file(file_id)
-                if file.file_path:
-                    result = await bot.download_file(file.file_path)
-                    if result:
-                        image_bytes = result.read()
-                        description = await process_image(
-                            image_bytes, caption=caption
-                        )
+            file = await bot.get_file(file_id)
+            if file.file_path:
+                result = await bot.download_file(file.file_path)
+                if result:
+                    image_bytes = result.read()
+                    description = await process_image(
+                        image_bytes, caption=caption
+                    )
         except Exception as e:
             logger.error("Photo download/description failed: %s", e)
 
