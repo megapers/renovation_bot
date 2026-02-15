@@ -506,7 +506,7 @@ async def handle_photo_message(message: TgMessage, bot: Bot) -> None:
 # ═══════════════════════════════════════════════════════════════
 
 
-@router.message(F.text, flags={"store_message": True})
+@router.message(F.text & ~F.text.startswith("/"), flags={"store_message": True})
 async def store_text_message(message: TgMessage) -> None:
     """
     Store every incoming text message for future RAG/embedding use.
@@ -514,17 +514,15 @@ async def store_text_message(message: TgMessage) -> None:
     This handler stores the message but does NOT prevent other handlers
     from processing it. It runs with a flag to mark it as a storage handler.
 
-    Note: This handler is registered with lower priority. It stores
-    messages in the background without blocking the main response flow.
+    Note: Commands are excluded at the filter level (not just inside the
+    handler body) so that they can be matched by routers registered later
+    (e.g. report_router for /report, /status, /nextstage, etc.).
     """
     tg_user = message.from_user
     if tg_user is None:
         return
 
-    # Skip commands — they're handled by specific handlers
     text = message.text or ""
-    if text.startswith("/"):
-        return
 
     # Skip very short messages (single characters, etc.)
     if len(text.strip()) < 3:
