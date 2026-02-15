@@ -168,6 +168,9 @@ class TelegramAdapter(PlatformAdapter):
         ]
 
         try:
+            # Default scope — shown when client doesn't support scoped commands
+            await self.bot.set_my_commands(private_commands)
+            # Private chat scope — overrides default in private chats
             await self.bot.set_my_commands(
                 private_commands,
                 scope=BotCommandScopeAllPrivateChats(),

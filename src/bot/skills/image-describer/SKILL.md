@@ -1,7 +1,6 @@
 ---
 name: image-describer
 description: "Описание фотографий ремонта: распознавание материалов, работ и проблем"
-priority: 10
 metadata:
   language: ru
   requires_ai: true

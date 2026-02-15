@@ -1,7 +1,6 @@
 ---
 name: nlp-parser
 description: "NLP-парсер сообщений: извлечение этапов, расходов, статусов из текста"
-priority: 10
 metadata:
   language: ru
   requires_ai: true

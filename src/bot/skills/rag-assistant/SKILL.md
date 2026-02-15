@@ -1,7 +1,6 @@
 ---
 name: rag-assistant
 description: "RAG-помощник по ремонту: ответы на вопросы о проекте с контекстом"
-priority: 10
 metadata:
   language: ru
   requires_ai: true
