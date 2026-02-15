@@ -402,16 +402,16 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext, bot: Bot) 
             return
 
         # Create the project
-        # Check if this chat already has a project linked
+        # Only bind to a group chat, never to a private chat.
+        # The user links to a group later via deep link or /link.
+        chat_type = callback.message.chat.type if callback.message else None  # type: ignore[union-attr]
         chat_id = callback.message.chat.id if callback.message else None  # type: ignore[union-attr]
-        platform_chat_id: str | None = str(chat_id) if chat_id else None
+        platform_chat_id: str | None = None
 
-        if chat_id:
+        if chat_type in ("group", "supergroup") and chat_id:
             existing = await get_project_by_telegram_chat_id(session, chat_id)
-            if existing:
-                # Private chat already linked — create project without binding chat
-                # The user can link it to a group chat later via /invite
-                platform_chat_id = None
+            if not existing:
+                platform_chat_id = str(chat_id)
 
         project = await create_renovation_project(
             session,
