@@ -120,3 +120,19 @@ class ReportSelection(StatesGroup):
     """
 
     selecting_project = State()        # Pick project (if user has multiple)
+
+
+class ChatMode(StatesGroup):
+    """
+    States for the interactive AI chat mode.
+
+    Owner/Co-Owner can enter a multi-turn conversation with the AI
+    about their project. Every text message is forwarded to the LLM
+    until the user sends /end to exit.
+
+    FSM data keys used:
+      project_id           — current project being discussed
+      chat_history          — list of {"role", "content"} dicts
+    """
+
+    chatting = State()                 # Active conversation with LLM

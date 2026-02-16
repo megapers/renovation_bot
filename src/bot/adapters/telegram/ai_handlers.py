@@ -2,7 +2,9 @@
 Telegram handlers for AI features (Phase 8).
 
 Commands:
-  /ask <question>    — ask the AI about the project (RAG)
+  /ask <question>    — ask the AI about the project (RAG, one-shot)
+  /chat              — enter conversational AI mode (owner/co-owner)
+  /end               — exit conversational AI mode
   /parse <text>      — parse natural language for stage/expense info
   /backfill          — backfill embeddings for historical messages
   /summary           — summarize each participant's contributions
@@ -197,6 +199,175 @@ async def cmd_ask(message: TgMessage, state: FSMContext) -> None:
             await thinking_msg.edit_text(f"🤖 <b>Ответ:</b>\n\n{answer}")
         except Exception:
             await message.answer(f"🤖 <b>Ответ:</b>\n\n{answer}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# /chat — enter conversational AI mode (owner / co-owner only)
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.message(Command("chat"))
+async def cmd_chat(message: TgMessage, state: FSMContext) -> None:
+    """
+    Enter interactive AI chat mode.
+
+    The user can ask follow-up questions about the project, search
+    messages, request participant summaries — all in a natural
+    multi-turn conversation.  Only Owner and Co-Owner can use this.
+
+    Exit with /end.
+    """
+    tg_user = message.from_user
+    if tg_user is None:
+        return
+
+    if not is_ai_configured():
+        await message.answer(
+            "⚠️ AI-сервис не настроен.\n"
+            "Обратитесь к администратору для настройки Azure OpenAI."
+        )
+        return
+
+    from bot.adapters.telegram.fsm_states import ChatMode, ReportSelection
+    from bot.adapters.telegram.project_resolver import resolve_project
+    from bot.db.models import RoleType
+
+    resolved = await resolve_project(
+        message, state,
+        intent="chat",
+        picker_state=ReportSelection.selecting_project,
+    )
+    if not resolved:
+        return
+
+    # ── Role check: owner or co-owner only ──
+    async with async_session_factory() as session:
+        roles = await repo.get_user_roles_in_project(
+            session, resolved.user_id, resolved.id,
+        )
+
+    allowed = {RoleType.OWNER, RoleType.CO_OWNER}
+    if not (set(roles) & allowed):
+        await message.answer(
+            "🚫 Режим чата доступен только владельцу и совладельцу проекта."
+        )
+        return
+
+    # ── Enter chat FSM state ──
+    await state.set_state(ChatMode.chatting)
+    await state.update_data(
+        chat_project_id=resolved.id,
+        chat_history=[],
+    )
+
+    await message.answer(
+        "💬 <b>Режим AI-чата активирован</b>\n\n"
+        "Задавайте вопросы о проекте, участниках, бюджете, "
+        "ходе работ — я отвечу на основе всех данных.\n\n"
+        "Примеры:\n"
+        "• <i>Что сделал Иван?</i>\n"
+        "• <i>Кто покупал материалы?</i>\n"
+        "• <i>Какой текущий статус по электрике?</i>\n"
+        "• <i>Есть ли просрочки?</i>\n"
+        "• <i>Расскажи о бюджете подробно</i>\n\n"
+        "Для выхода отправьте /end"
+    )
+
+
+@router.message(Command("end"))
+async def cmd_end_chat(message: TgMessage, state: FSMContext) -> None:
+    """Exit the interactive AI chat mode."""
+    from bot.adapters.telegram.fsm_states import ChatMode
+
+    current = await state.get_state()
+    if current == ChatMode.chatting.state:
+        data = await state.get_data()
+        turns = len(data.get("chat_history", [])) // 2
+        await state.clear()
+        await message.answer(
+            f"✅ AI-чат завершён ({turns} вопросов).\n"
+            "Используйте /chat чтобы начать новый диалог."
+        )
+    else:
+        await message.answer("ℹ️ Вы не в режиме AI-чата. Используйте /chat.")
+
+
+# Handler for text messages: AI chat mode OR silent storage
+@router.message(F.text & ~F.text.startswith("/"), flags={"store_message": True})
+async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -> None:
+    """
+    Process text messages.
+
+    - If FSM state is ChatMode.chatting AND the message is not
+      gate_silent → forward to the conversational AI and reply.
+    - Otherwise → store silently for RAG / embedding.
+
+    This combines the old ``store_text_message`` with the new chat mode.
+    Commands are excluded at the filter level so routers registered
+    later (e.g. report_router) can still match /report, /status, etc.
+    """
+    from bot.adapters.telegram.fsm_states import ChatMode
+
+    silent = kwargs.get("gate_silent", False)
+    current = await state.get_state()
+    in_chat = current == ChatMode.chatting.state and not silent
+
+    tg_user = message.from_user
+    if tg_user is None:
+        return
+
+    user_text = (message.text or "").strip()
+    if len(user_text) < 3:
+        return
+
+    # ── Always store for RAG ──
+    user_id, project_id = await _resolve_project_for_storage(message)
+    await _store_and_embed_message(
+        project_id=project_id,
+        user_id=user_id,
+        chat_id=str(message.chat.id),
+        message_id=str(message.message_id),
+        message_type=MessageType.TEXT,
+        raw_text=user_text,
+        file_ref=None,
+        transcribed_text=user_text,
+    )
+
+    if not in_chat:
+        # Not in conversational mode — storage only, no reply
+        return
+
+    # ── Conversational AI mode ──
+    data = await state.get_data()
+    chat_project_id = data.get("chat_project_id")
+    history = data.get("chat_history", [])
+
+    if not chat_project_id:
+        await state.clear()
+        await message.answer("❌ Проект не найден. Используйте /chat.")
+        return
+
+    # Send thinking indicator
+    thinking_msg = await message.answer("🤔 Думаю...")
+
+    from bot.services.chat_service import chat_with_project
+
+    async with async_session_factory() as session:
+        answer, new_history = await chat_with_project(
+            session,
+            project_id=chat_project_id,
+            user_message=user_text,
+            conversation_history=history,
+        )
+
+    # Save updated history
+    await state.update_data(chat_history=new_history)
+
+    # Send response
+    try:
+        await thinking_msg.edit_text(f"🤖 {answer}")
+    except Exception:
+        await message.answer(f"🤖 {answer}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -574,46 +745,3 @@ async def handle_photo_message(message: TgMessage, bot: Bot, **kwargs) -> None:
         )
 
     await message.reply(reply)
-
-
-# ═══════════════════════════════════════════════════════════════
-# Text message storage (runs on all text messages for embedding)
-# ═══════════════════════════════════════════════════════════════
-
-
-@router.message(F.text & ~F.text.startswith("/"), flags={"store_message": True})
-async def store_text_message(message: TgMessage, **kwargs) -> None:
-    """
-    Store every incoming text message for future RAG/embedding use.
-
-    In group chats, messages that are NOT directed at the bot arrive
-    with ``gate_silent=True`` (set by MentionGateMiddleware).  These are
-    stored silently — no reply, no interaction — so the RAG system and
-    participant-summary feature have full conversation history.
-
-    Note: Commands are excluded at the filter level (not just inside the
-    handler body) so that they can be matched by routers registered later
-    (e.g. report_router for /report, /status, /nextstage, etc.).
-    """
-    tg_user = message.from_user
-    if tg_user is None:
-        return
-
-    text = message.text or ""
-
-    # Skip very short messages (single characters, etc.)
-    if len(text.strip()) < 3:
-        return
-
-    user_id, project_id = await _resolve_project_for_storage(message)
-
-    await _store_and_embed_message(
-        project_id=project_id,
-        user_id=user_id,
-        chat_id=str(message.chat.id),
-        message_id=str(message.message_id),
-        message_type=MessageType.TEXT,
-        raw_text=text,
-        file_ref=None,
-        transcribed_text=text,
-    )

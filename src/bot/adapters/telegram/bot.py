@@ -158,7 +158,7 @@ class TelegramAdapter(PlatformAdapter):
             BotCommand(command="team", description="Команда проекта"),
             BotCommand(command="invite", description="Пригласить участника"),
             BotCommand(command="myrole", description="Моя роль"),
-            BotCommand(command="ask", description="Задать вопрос AI"),
+            BotCommand(command="chat", description="AI-чат о проекте"),
             BotCommand(command="launch", description="Запустить проект"),
         ]
 
@@ -172,7 +172,7 @@ class TelegramAdapter(PlatformAdapter):
             BotCommand(command="report", description="Отчёт по проекту"),
             BotCommand(command="team", description="Команда проекта"),
             BotCommand(command="myrole", description="Моя роль"),
-            BotCommand(command="ask", description="Задать вопрос AI"),
+            BotCommand(command="chat", description="AI-чат о проекте"),
         ]
 
         try:

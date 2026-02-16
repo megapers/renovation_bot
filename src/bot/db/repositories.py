@@ -1451,3 +1451,84 @@ async def search_messages_fulltext(
     # Preserve the ranked order from the raw SQL
     msgs_map = {m.id: m for m in result.scalars().all()}
     return [msgs_map[mid] for mid in msg_ids if mid in msgs_map]
+
+
+# ── Chat-assistant helpers ───────────────────────────────────
+
+
+async def get_team_roster_with_stats(
+    session: AsyncSession,
+    project_id: int,
+) -> list[dict]:
+    """
+    Return team roster with role(s) and message count per member.
+
+    Returns list of dicts:
+      {
+        "user_id": int,
+        "full_name": str,
+        "telegram_id": int | None,
+        "roles": [str, ...],
+        "message_count": int,
+      }
+    """
+    # Get team members and roles
+    result = await session.execute(
+        select(ProjectRole)
+        .where(ProjectRole.project_id == project_id)
+        .options(selectinload(ProjectRole.user))
+        .order_by(ProjectRole.role)
+    )
+    pr_rows = result.scalars().all()
+
+    user_map: dict[int, dict] = {}
+    for pr in pr_rows:
+        uid = pr.user_id
+        if uid not in user_map:
+            user_map[uid] = {
+                "user_id": uid,
+                "full_name": pr.user.full_name if pr.user else f"User #{uid}",
+                "telegram_id": pr.user.telegram_id if pr.user else None,
+                "roles": [],
+                "message_count": 0,
+            }
+        user_map[uid]["roles"].append(pr.role.value)
+
+    # Get message counts per user
+    if user_map:
+        msg_counts = await session.execute(
+            select(Message.user_id, func.count(Message.id))
+            .where(
+                Message.project_id == project_id,
+                Message.is_from_bot == False,  # noqa: E712
+                Message.user_id.in_(list(user_map.keys())),
+            )
+            .group_by(Message.user_id)
+        )
+        for uid, cnt in msg_counts.all():
+            if uid in user_map:
+                user_map[uid]["message_count"] = cnt
+
+    return list(user_map.values())
+
+
+async def get_recent_messages_for_user_in_project(
+    session: AsyncSession,
+    project_id: int,
+    user_id: int,
+    *,
+    limit: int = 50,
+) -> Sequence[Message]:
+    """Get recent messages from a specific user in a project (newest first)."""
+    result = await session.execute(
+        select(Message)
+        .where(
+            Message.project_id == project_id,
+            Message.user_id == user_id,
+            Message.is_from_bot == False,  # noqa: E712
+        )
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+        .options(selectinload(Message.user))
+    )
+    return result.scalars().all()
