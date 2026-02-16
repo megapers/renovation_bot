@@ -70,6 +70,10 @@ class RoleMiddleware(BaseMiddleware):
         async with async_session_factory() as session:
             # Load user
             user = await get_user_by_telegram_id(session, tg_user.id)
+            logger.debug(
+                "RoleMiddleware: tg_user.id=%d, found user=%s, chat_id=%s",
+                tg_user.id, user, chat_id,
+            )
 
             # Load project from group chat
             project = None

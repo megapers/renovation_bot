@@ -20,14 +20,17 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Computed,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -308,9 +311,21 @@ class Message(Base):
     is_from_bot: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Full-text search vector — auto-generated from transcribed_text
+    # Uses 'simple' config (language-agnostic tokenizer, works for Russian)
+    search_tsv = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('simple', COALESCE(transcribed_text, ''))", persisted=True),
+        nullable=True,
+    )
+
     # Relationships
     project: Mapped["Project | None"] = relationship()
     user: Mapped["User | None"] = relationship()
+
+    __table_args__ = (
+        Index("ix_messages_search_tsv", "search_tsv", postgresql_using="gin"),
+    )
 
 
 class Embedding(Base):
@@ -324,3 +339,14 @@ class Embedding(Base):
     embedding = mapped_column(Vector(1536))  # text-embedding-3-small outputs 1536 dims
     metadata_: Mapped[str | None] = mapped_column("metadata", Text)  # JSON string
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Full-text search vector — auto-generated from content
+    search_tsv = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('simple', COALESCE(content, ''))", persisted=True),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        Index("ix_embeddings_search_tsv", "search_tsv", postgresql_using="gin"),
+    )

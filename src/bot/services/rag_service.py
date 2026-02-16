@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.services.ai_client import chat_completion, is_ai_configured
-from bot.services.embedding_service import search_similar
+from bot.services.embedding_service import search_hybrid, search_similar
 from bot.services.skills_loader import get_skill_prompt
 
 logger = logging.getLogger(__name__)
@@ -86,13 +86,13 @@ async def ask_project(
             "необходимо настроить Azure OpenAI в .env файле."
         )
 
-    # 1. Retrieve relevant context from embeddings
-    similar_chunks = await search_similar(
+    # 1. Retrieve relevant context via hybrid search (vector + full-text)
+    similar_chunks = await search_hybrid(
         session,
         project_id=project_id,
         query_text=question,
         top_k=top_k,
-        min_similarity=0.25,
+        min_similarity=0.2,
     )
 
     # 2. Build context block
@@ -113,7 +113,10 @@ async def ask_project(
                 header += f" от {author}"
             if date_str:
                 header += f" ({date_str})"
-            context_parts.append(f"{i}. {header}:\n{chunk['content']}")
+            sources_tag = "/".join(chunk.get("sources", []))
+            context_parts.append(
+                f"{i}. {header} [{sources_tag}]:\n{chunk['content']}"
+            )
 
     context_block = "\n\n".join(context_parts) if context_parts else "Контекст отсутствует."
 

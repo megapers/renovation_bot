@@ -49,10 +49,10 @@ class TelegramAdapter(PlatformAdapter):
 
     def _register_routers(self) -> None:
         """Attach all handler routers and middleware to the dispatcher."""
-        # Register middleware (runs before every handler)
-        # Note: MentionGateMiddleware is registered in start() after bot.me() resolves
-        self.dp.message.middleware(RoleMiddleware())
-        self.dp.callback_query.middleware(RoleMiddleware())
+        # Note: RoleMiddleware is registered as outer middleware in start()
+        # after MentionGateMiddleware, so that data["user"] is available
+        # to filters like RequireRegistration() (filters run before inner
+        # middleware but after outer middleware).
 
         # Register routers in order of priority
         self.dp.include_router(group_router)           # group chat events (bot added/removed)
@@ -123,6 +123,14 @@ class TelegramAdapter(PlatformAdapter):
         self.dp.message.outer_middleware(
             MentionGateMiddleware(bot_id=me.id, bot_username=me.username or "")
         )
+
+        # Register RoleMiddleware as OUTER middleware so that data["user"],
+        # data["project"], and data["user_roles"] are available to filters
+        # like RequireRegistration().  Inner middleware runs AFTER filter
+        # evaluation, which is too late for filter-based checks.
+        # Order matters: MentionGate first (gates group noise), then Role.
+        self.dp.message.outer_middleware(RoleMiddleware())
+        self.dp.callback_query.outer_middleware(RoleMiddleware())
 
         # Set up command menus for different chat types
         await self._set_command_scopes()

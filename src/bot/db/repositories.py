@@ -1363,3 +1363,91 @@ async def get_embedding_count_for_project(
         .where(Embedding.project_id == project_id)
     )
     return result.scalar_one()
+
+
+# ── Participant message queries (hybrid search) ──────────────
+
+
+async def get_messages_grouped_by_user(
+    session: AsyncSession,
+    project_id: int,
+    *,
+    limit_per_user: int = 200,
+) -> dict[int, list[Message]]:
+    """
+    Fetch all non-bot messages for a project, grouped by user_id.
+
+    Returns:
+        {user_id: [Message, ...]} where messages are oldest-first.
+    """
+    result = await session.execute(
+        select(Message)
+        .where(
+            Message.project_id == project_id,
+            Message.is_from_bot == False,  # noqa: E712
+            Message.user_id.isnot(None),
+            Message.transcribed_text.isnot(None),
+        )
+        .options(selectinload(Message.user))
+        .order_by(Message.user_id, Message.created_at.asc())
+    )
+    messages = result.scalars().all()
+
+    grouped: dict[int, list[Message]] = {}
+    for msg in messages:
+        uid = msg.user_id
+        assert uid is not None
+        if uid not in grouped:
+            grouped[uid] = []
+        if len(grouped[uid]) < limit_per_user:
+            grouped[uid].append(msg)
+    return grouped
+
+
+async def search_messages_fulltext(
+    session: AsyncSession,
+    project_id: int,
+    query_text: str,
+    *,
+    top_k: int = 20,
+) -> Sequence[Message]:
+    """
+    Full-text search over the messages table using the search_tsv column.
+
+    Returns messages ranked by ts_rank, newest first for ties.
+    """
+    from sqlalchemy import text as sa_text
+
+    # Build a simple tsquery from the input words
+    tokens = query_text.split()
+    clean = [t.strip(".,;:!?\"'()[]{}«»—–") for t in tokens]
+    clean = [t for t in clean if len(t) >= 2]
+    if not clean:
+        return []
+    tsq = " | ".join(f"{t}:*" for t in clean)
+
+    sql = sa_text("""
+        SELECT id
+        FROM messages
+        WHERE project_id = :project_id
+          AND search_tsv @@ to_tsquery('simple', :tsq)
+        ORDER BY ts_rank(search_tsv, to_tsquery('simple', :tsq)) DESC,
+                 created_at DESC
+        LIMIT :top_k
+    """)
+
+    id_result = await session.execute(
+        sql, {"project_id": project_id, "tsq": tsq, "top_k": top_k}
+    )
+    msg_ids = [row[0] for row in id_result.fetchall()]
+    if not msg_ids:
+        return []
+
+    result = await session.execute(
+        select(Message)
+        .where(Message.id.in_(msg_ids))
+        .options(selectinload(Message.user))
+    )
+    # Preserve the ranked order from the raw SQL
+    msgs_map = {m.id: m for m in result.scalars().all()}
+    return [msgs_map[mid] for mid in msg_ids if mid in msgs_map]

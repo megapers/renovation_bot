@@ -184,3 +184,184 @@ async def search_similar(
         results[0]["similarity"] if results else 0,
     )
     return results
+
+
+# ── Full-text search (tsvector / tsquery) ────────────────────
+
+
+def _build_tsquery(query_text: str) -> str:
+    """
+    Build a PostgreSQL tsquery string from a user query.
+
+    Tokenises the input, drops very short tokens, and joins with '|' (OR)
+    so that any keyword match counts.  Uses the 'simple' text-search
+    config (language-agnostic, works well for Russian).
+    """
+    tokens = query_text.split()
+    # Keep tokens with ≥2 chars; strip punctuation
+    clean = []
+    for t in tokens:
+        t = t.strip(".,;:!?\"'()[]{}«»—–")
+        if len(t) >= 2:
+            clean.append(t)
+    if not clean:
+        return query_text.strip() or ""
+    # prefix matching (lexeme:*) so partial words still hit
+    return " | ".join(f"{t}:*" for t in clean)
+
+
+async def search_fulltext(
+    session: AsyncSession,
+    *,
+    project_id: int,
+    query_text: str,
+    top_k: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Full-text search over embeddings using PostgreSQL tsvector / tsquery.
+
+    Searches the ``search_tsv`` generated column with a 'simple'-config
+    tsquery.  Results are ranked by ``ts_rank``.
+
+    Returns:
+        List of dicts: {"id", "content", "metadata", "rank"}
+        sorted by descending rank.
+    """
+    tsq = _build_tsquery(query_text)
+    if not tsq:
+        return []
+
+    sql = text("""
+        SELECT
+            id,
+            content,
+            metadata AS metadata_,
+            ts_rank(search_tsv, to_tsquery('simple', :tsq)) AS rank
+        FROM embeddings
+        WHERE project_id = :project_id
+          AND search_tsv @@ to_tsquery('simple', :tsq)
+        ORDER BY rank DESC
+        LIMIT :top_k
+    """)
+
+    result = await session.execute(
+        sql,
+        {"project_id": project_id, "tsq": tsq, "top_k": top_k},
+    )
+    rows = result.fetchall()
+
+    results = []
+    for row in rows:
+        metadata = None
+        if row.metadata_:
+            try:
+                metadata = json.loads(row.metadata_)
+            except json.JSONDecodeError:
+                metadata = {"raw": row.metadata_}
+        results.append({
+            "id": row.id,
+            "content": row.content,
+            "metadata": metadata,
+            "rank": float(row.rank),
+        })
+
+    logger.debug(
+        "Full-text search: project_id=%d query='%s' → %d results",
+        project_id, query_text[:50], len(results),
+    )
+    return results
+
+
+# ── Hybrid search (vector + full-text, RRF fusion) ──────────
+
+
+async def search_hybrid(
+    session: AsyncSession,
+    *,
+    project_id: int,
+    query_text: str,
+    top_k: int = 5,
+    vector_weight: float = 0.6,
+    fts_weight: float = 0.4,
+    min_similarity: float = 0.2,
+) -> list[dict[str, Any]]:
+    """
+    Hybrid search combining pgvector semantic similarity and PostgreSQL
+    full-text search using Reciprocal Rank Fusion (RRF).
+
+    The RRF formula: ``score = sum(1 / (k + rank_i))`` across retrieval
+    methods, where ``k=60`` (standard constant).  Weights are applied as
+    multipliers so the caller can bias towards vector or keyword matches.
+
+    Args:
+        project_id: restrict search to this project
+        query_text: user's search query
+        top_k: max results to return after fusion
+        vector_weight: multiplier for vector RRF score (default 0.6)
+        fts_weight: multiplier for FTS RRF score (default 0.4)
+        min_similarity: minimum cosine similarity for vector arm
+
+    Returns:
+        List of dicts: {"id", "content", "metadata", "score", "sources"}
+        sorted by descending fused score.
+    """
+    RRF_K = 60  # standard RRF constant
+
+    # Run both arms (vector needs AI; FTS does not)
+    vector_results = await search_similar(
+        session,
+        project_id=project_id,
+        query_text=query_text,
+        top_k=top_k * 2,  # over-fetch for better fusion
+        min_similarity=min_similarity,
+    )
+    fts_results = await search_fulltext(
+        session,
+        project_id=project_id,
+        query_text=query_text,
+        top_k=top_k * 2,
+    )
+
+    # Build RRF score map   id → {"score", "content", "metadata", "sources"}
+    merged: dict[int, dict[str, Any]] = {}
+
+    for rank_pos, item in enumerate(vector_results):
+        eid = item["id"]
+        rrf = vector_weight / (RRF_K + rank_pos + 1)
+        if eid not in merged:
+            merged[eid] = {
+                "id": eid,
+                "content": item["content"],
+                "metadata": item["metadata"],
+                "score": 0.0,
+                "sources": [],
+            }
+        merged[eid]["score"] += rrf
+        merged[eid]["sources"].append("vector")
+
+    for rank_pos, item in enumerate(fts_results):
+        eid = item["id"]
+        rrf = fts_weight / (RRF_K + rank_pos + 1)
+        if eid not in merged:
+            merged[eid] = {
+                "id": eid,
+                "content": item["content"],
+                "metadata": item["metadata"],
+                "score": 0.0,
+                "sources": [],
+            }
+        merged[eid]["score"] += rrf
+        merged[eid]["sources"].append("fts")
+
+    # Sort by fused score and trim
+    ranked = sorted(merged.values(), key=lambda x: x["score"], reverse=True)[:top_k]
+
+    logger.debug(
+        "Hybrid search: project_id=%d query='%s' → %d vec, %d fts → %d fused",
+        project_id,
+        query_text[:50],
+        len(vector_results),
+        len(fts_results),
+        len(ranked),
+    )
+    return ranked

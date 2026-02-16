@@ -5,6 +5,7 @@ Commands:
   /ask <question>    — ask the AI about the project (RAG)
   /parse <text>      — parse natural language for stage/expense info
   /backfill          — backfill embeddings for historical messages
+  /summary           — summarize each participant's contributions
 
 Message handlers:
   Voice messages     — transcribe via Whisper and store
@@ -356,12 +357,80 @@ async def cmd_backfill(message: TgMessage, state: FSMContext) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
+# /summary — participant contribution summaries
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.message(Command("summary"))
+async def cmd_summary(message: TgMessage, state: FSMContext) -> None:
+    """
+    Generate an AI summary of each participant's contributions.
+
+    Usage: /summary
+    """
+    tg_user = message.from_user
+    if tg_user is None:
+        return
+
+    if not is_ai_configured():
+        await message.answer("⚠️ AI-сервис не настроен.")
+        return
+
+    from bot.adapters.telegram.fsm_states import ReportSelection
+    from bot.adapters.telegram.project_resolver import resolve_project
+
+    resolved = await resolve_project(
+        message, state,
+        intent="summary",
+        picker_state=ReportSelection.selecting_project,
+    )
+    if not resolved:
+        return
+
+    status_msg = await message.answer("🔍 Анализирую вклад участников...")
+
+    from bot.services.participant_service import summarize_all_participants
+
+    async with async_session_factory() as session:
+        summaries = await summarize_all_participants(
+            session, project_id=resolved.id,
+        )
+
+    if not summaries:
+        await status_msg.edit_text("📭 Нет сообщений участников для анализа.")
+        return
+
+    parts: list[str] = ["👥 <b>Вклад участников проекта</b>\n"]
+    for s in summaries:
+        parts.append(
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>{s['user_name']}</b> ({s['message_count']} сообщ.)\n\n"
+            f"{s['summary']}"
+        )
+
+    text = "\n\n".join(parts)
+    # Telegram message limit is ~4096 chars; split if needed
+    if len(text) > 4000:
+        # Send in chunks per participant
+        await status_msg.edit_text(parts[0])
+        for part in parts[1:]:
+            full_part = part.strip()
+            if full_part:
+                await message.answer(full_part)
+    else:
+        try:
+            await status_msg.edit_text(text)
+        except Exception:
+            await message.answer(text)
+
+
+# ═══════════════════════════════════════════════════════════════
 # Voice message handler
 # ═══════════════════════════════════════════════════════════════
 
 
 @router.message(F.voice)
-async def handle_voice_message(message: TgMessage, bot: Bot) -> None:
+async def handle_voice_message(message: TgMessage, bot: Bot, **kwargs) -> None:
     """
     Handle incoming voice messages.
 
@@ -378,6 +447,7 @@ async def handle_voice_message(message: TgMessage, bot: Bot) -> None:
     if voice is None:
         return
 
+    silent = kwargs.get("gate_silent", False)
     user_id, project_id = await _resolve_project_for_storage(message)
 
     # Download and transcribe
@@ -409,7 +479,9 @@ async def handle_voice_message(message: TgMessage, bot: Bot) -> None:
         transcribed_text=transcribed,
     )
 
-    # Reply
+    # Reply (skip when gate_silent — group message not directed at bot)
+    if silent:
+        return
     if transcribed:
         await message.reply(
             f"🎤 <b>Распознано:</b>\n{transcribed}"
@@ -427,7 +499,7 @@ async def handle_voice_message(message: TgMessage, bot: Bot) -> None:
 
 
 @router.message(F.photo)
-async def handle_photo_message(message: TgMessage, bot: Bot) -> None:
+async def handle_photo_message(message: TgMessage, bot: Bot, **kwargs) -> None:
     """
     Handle incoming photo messages.
 
@@ -449,6 +521,7 @@ async def handle_photo_message(message: TgMessage, bot: Bot) -> None:
     photo = photos[-1]
     caption = message.caption
 
+    silent = kwargs.get("gate_silent", False)
     user_id, project_id = await _resolve_project_for_storage(message)
 
     # Download and describe
@@ -487,7 +560,9 @@ async def handle_photo_message(message: TgMessage, bot: Bot) -> None:
         transcribed_text=transcribed,
     )
 
-    # Reply
+    # Reply (skip when gate_silent — group message not directed at bot)
+    if silent:
+        return
     if description:
         reply = f"📸 <b>Описание фото:</b>\n{description}"
     elif caption:
@@ -507,12 +582,14 @@ async def handle_photo_message(message: TgMessage, bot: Bot) -> None:
 
 
 @router.message(F.text & ~F.text.startswith("/"), flags={"store_message": True})
-async def store_text_message(message: TgMessage) -> None:
+async def store_text_message(message: TgMessage, **kwargs) -> None:
     """
     Store every incoming text message for future RAG/embedding use.
 
-    This handler stores the message but does NOT prevent other handlers
-    from processing it. It runs with a flag to mark it as a storage handler.
+    In group chats, messages that are NOT directed at the bot arrive
+    with ``gate_silent=True`` (set by MentionGateMiddleware).  These are
+    stored silently — no reply, no interaction — so the RAG system and
+    participant-summary feature have full conversation history.
 
     Note: Commands are excluded at the filter level (not just inside the
     handler body) so that they can be matched by routers registered later

@@ -13,8 +13,11 @@ The gate opens (message passes through) when ANY of these is true:
   • The message text matches a custom pattern (e.g. "бот," prefix)
   • mention_gate_enabled is False (gate disabled entirely)
 
-When the gate is CLOSED, the handler chain is silently skipped —
-no error message, no reaction.  The message is simply ignored.
+When the gate is CLOSED, the message still passes through but is marked
+with ``data["gate_silent"] = True``.  Handlers that see this flag should
+store the message for RAG/search but **not** send any visible reply.
+This lets the bot silently index all group conversation for semantic
+search and participant summaries without becoming noisy.
 
 Configuration (in .env):
   MENTION_GATE_ENABLED=true
@@ -102,13 +105,17 @@ class MentionGateMiddleware(BaseMiddleware):
         if self._is_directed_at_bot(event):
             return await handler(event, data)
 
-        # Gate closed — silently ignore
+        # Gate "soft close" — pass message through for storage but mark
+        # it as silent so handlers know NOT to send a visible reply.
+        # This enables the RAG system to index all group conversation.
+        data["gate_silent"] = True
         logger.debug(
-            "MentionGate: ignoring message in chat %d from user %d",
+            "MentionGate: passing message silently (storage-only) "
+            "in chat %d from user %d",
             event.chat.id,
             event.from_user.id if event.from_user else 0,
         )
-        return None  # short-circuit: don't call handler chain
+        return await handler(event, data)
 
     def _is_directed_at_bot(self, message: Message) -> bool:
         """Check if the message is directed at the bot."""
