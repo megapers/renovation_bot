@@ -1201,12 +1201,14 @@ async def get_project_full_report_data(
     stages = list(await get_stages_for_project(session, project_id))
     budget_summary = await get_project_budget_summary(session, project_id)
     category_summaries = await get_budget_summary_by_category(session, project_id)
+    budget_items = list(await get_budget_items_for_project(session, project_id))
 
     return {
         "project": project,
         "stages": stages,
         "budget_summary": budget_summary,
         "category_summaries": category_summaries,
+        "budget_items": budget_items,
     }
 
 

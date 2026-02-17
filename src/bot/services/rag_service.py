@@ -189,4 +189,39 @@ def build_project_context(
             f"  Предоплаты: {budget.get('total_prepayments', 0):.0f}"
         )
 
+    # Per-category expense breakdown
+    from bot.core.budget_service import CATEGORY_LABELS
+
+    cat_summaries = project_data.get("category_summaries", [])
+    if cat_summaries:
+        cat_lines = ["Расходы по категориям:"]
+        for cs in cat_summaries:
+            cat_name = CATEGORY_LABELS.get(cs["category"], cs["category"])
+            cat_lines.append(
+                f"  {cat_name}: работа {cs['work']:.0f}, "
+                f"материалы {cs['materials']:.0f}, "
+                f"итого {cs['total']:.0f}"
+            )
+        parts.append("\n".join(cat_lines))
+
+    # Individual budget items (expense descriptions)
+    budget_items = project_data.get("budget_items", [])
+    if budget_items:
+        item_lines = ["Список расходов:"]
+        for bi in budget_items:
+            cat_name = CATEGORY_LABELS.get(bi.category, bi.category)
+            desc = bi.description or "без описания"
+            amounts = []
+            if float(bi.work_cost) > 0:
+                amounts.append(f"работа {float(bi.work_cost):.0f}")
+            if float(bi.material_cost) > 0:
+                amounts.append(f"материалы {float(bi.material_cost):.0f}")
+            if float(bi.prepayment) > 0:
+                amounts.append(f"предоплата {float(bi.prepayment):.0f}")
+            confirmed = "подтверждён" if bi.is_confirmed else "не подтверждён"
+            item_lines.append(
+                f"  • {cat_name} — {desc}: {', '.join(amounts)} ({confirmed})"
+            )
+        parts.append("\n".join(item_lines))
+
     return "\n\n".join(parts)
