@@ -461,7 +461,7 @@ async def _save_expense(target: Message, state: FSMContext) -> None:
             field_name="amount",
             old_value=None,
             new_value=str(total),
-            changed_by_user_id=None,  # TODO: pass user_id through state
+            user_id=None,  # TODO: pass user_id through state
         )
         await session.commit()
 
