@@ -20,9 +20,11 @@ messages table and embedded for semantic search.
 import logging
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message as TgMessage
+
+from bot.adapters.telegram.fsm_states import ChatMode
 
 from bot.db import repositories as repo
 from bot.db.models import MessageType
@@ -293,7 +295,16 @@ async def cmd_end_chat(message: TgMessage, state: FSMContext) -> None:
 
 
 # Handler for text messages: AI chat mode OR silent storage
-@router.message(F.text & ~F.text.startswith("/"), flags={"store_message": True})
+#
+# StateFilter limits this to ChatMode.chatting or None (no active FSM
+# flow).  Without this filter the handler would swallow text intended
+# for FSM-driven flows (budget wizard, project creation, etc.) that
+# are registered in earlier routers.
+@router.message(
+    F.text & ~F.text.startswith("/"),
+    StateFilter(ChatMode.chatting, None),
+    flags={"store_message": True},
+)
 async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -> None:
     """
     Process text messages.
@@ -305,9 +316,10 @@ async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -
     This combines the old ``store_text_message`` with the new chat mode.
     Commands are excluded at the filter level so routers registered
     later (e.g. report_router) can still match /report, /status, etc.
-    """
-    from bot.adapters.telegram.fsm_states import ChatMode
 
+    StateFilter ensures this handler does NOT intercept text meant for
+    FSM-driven flows (expense wizard, project creation, stage setup).
+    """
     silent = kwargs.get("gate_silent", False)
     current = await state.get_state()
     in_chat = current == ChatMode.chatting.state and not silent
