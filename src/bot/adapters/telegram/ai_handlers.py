@@ -25,6 +25,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message as TgMessage
 
 from bot.adapters.telegram.fsm_states import ChatMode
+from bot.core.report_service import parse_quick_command
 
 from bot.db import repositories as repo
 from bot.db.models import MessageType
@@ -330,6 +331,10 @@ async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -
 
     user_text = (message.text or "").strip()
     if len(user_text) < 3:
+        return
+
+    # ── Skip recognized quick commands so report_router can handle them ──
+    if not in_chat and parse_quick_command(user_text) is not None:
         return
 
     # ── Always store for RAG ──
