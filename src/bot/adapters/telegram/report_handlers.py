@@ -16,7 +16,7 @@ Quick text commands (without /):
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -329,7 +329,7 @@ async def report_select_project(
 # ═══════════════════════════════════════════════════════════════
 
 
-@router.message(F.text, StateFilter(None))
+@router.message(F.text)
 async def handle_quick_command(message: Message, state: FSMContext) -> None:
     """
     Handle quick text commands (sent without /).
@@ -337,11 +337,9 @@ async def handle_quick_command(message: Message, state: FSMContext) -> None:
     Recognized commands: бюджет, этапы, расходы, отчёт, следующий этап,
     мой этап, статус, дедлайн, эксперт
 
-    This handler has lowest priority — placed LAST in router registration
-    so it only catches unhandled text messages.
-
-    StateFilter(None) ensures this handler does NOT intercept text
-    meant for FSM-driven flows (expense wizard, project creation, etc.).
+    Also called directly from handle_chat_message (ai_handlers) for
+    quick-command dispatch.  No StateFilter — FSM-specific handlers on
+    earlier routers intercept text meant for active wizards.
     """
     if not message.text:
         return

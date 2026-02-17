@@ -295,15 +295,14 @@ async def cmd_end_chat(message: TgMessage, state: FSMContext) -> None:
         await message.answer("ℹ️ Вы не в режиме AI-чата. Используйте /chat.")
 
 
-# Handler for text messages: AI chat mode OR silent storage
+# Handler for text messages: AI chat mode, quick commands, or silent storage.
 #
-# StateFilter limits this to ChatMode.chatting or None (no active FSM
-# flow).  Without this filter the handler would swallow text intended
-# for FSM-driven flows (budget wizard, project creation, etc.) that
-# are registered in earlier routers.
+# No StateFilter — this handler is on the ai_router which is registered
+# AFTER all FSM-driven routers (project, stage, budget).  Text intended
+# for those flows is caught by state-specific handlers on earlier routers
+# before it reaches here.
 @router.message(
     F.text & ~F.text.startswith("/"),
-    StateFilter(ChatMode.chatting, None),
     flags={"store_message": True},
 )
 async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -> None:
@@ -318,8 +317,8 @@ async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -
     Commands are excluded at the filter level so routers registered
     later (e.g. report_router) can still match /report, /status, etc.
 
-    StateFilter ensures this handler does NOT intercept text meant for
-    FSM-driven flows (expense wizard, project creation, stage setup).
+    Text intended for FSM-driven flows (expense wizard, project creation,
+    stage setup) is caught by state-specific handlers on earlier routers.
     """
     silent = kwargs.get("gate_silent", False)
     current = await state.get_state()
@@ -333,9 +332,16 @@ async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -
     if len(user_text) < 3:
         return
 
-    # ── Skip recognized quick commands so report_router can handle them ──
-    if not in_chat and parse_quick_command(user_text) is not None:
-        return
+    # ── Quick command dispatch (when not in conversational AI mode) ──
+    if not in_chat:
+        command = parse_quick_command(user_text)
+        if command is not None:
+            await state.clear()  # Clear any stale FSM state
+            from bot.adapters.telegram.report_handlers import (
+                handle_quick_command as _dispatch_quick,
+            )
+            await _dispatch_quick(message, state)
+            return
 
     # ── Always store for RAG ──
     user_id, project_id = await _resolve_project_for_storage(message)
