@@ -27,10 +27,76 @@ from bot.db.models import (
     Stage,
     StageStatus,
     SubStage,
+    Tenant,
     User,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════
+# TENANT OPERATIONS
+# ═══════════════════════════════════════════════════════════════
+
+
+async def get_tenant_by_bot_token(
+    session: AsyncSession,
+    bot_token: str,
+) -> Tenant | None:
+    """Find a tenant by its Telegram bot token."""
+    result = await session.execute(
+        select(Tenant).where(Tenant.telegram_bot_token == bot_token)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_all_active_tenants(
+    session: AsyncSession,
+) -> Sequence[Tenant]:
+    """Get all active tenants."""
+    result = await session.execute(
+        select(Tenant).where(Tenant.is_active == True)  # noqa: E712
+    )
+    return result.scalars().all()
+
+
+async def create_tenant(
+    session: AsyncSession,
+    *,
+    name: str,
+    telegram_bot_token: str,
+    telegram_bot_username: str | None = None,
+) -> Tenant:
+    """Create a new tenant."""
+    tenant = Tenant(
+        name=name,
+        telegram_bot_token=telegram_bot_token,
+        telegram_bot_username=telegram_bot_username,
+    )
+    session.add(tenant)
+    await session.flush()
+    logger.info("Created tenant: %s (id=%d)", name, tenant.id)
+    return tenant
+
+
+async def update_tenant_username(
+    session: AsyncSession,
+    tenant_id: int,
+    username: str,
+) -> None:
+    """Update the resolved bot username for a tenant."""
+    result = await session.execute(
+        select(Tenant).where(Tenant.id == tenant_id)
+    )
+    tenant = result.scalar_one_or_none()
+    if tenant:
+        tenant.telegram_bot_username = username
+        await session.flush()
+
+
+# ═══════════════════════════════════════════════════════════════
+# PROJECT OPERATIONS
+# ═══════════════════════════════════════════════════════════════
 
 
 async def create_project(
@@ -41,12 +107,14 @@ async def create_project(
     area_sqm: float | None = None,
     renovation_type: RenovationType,
     total_budget: float | None = None,
+    tenant_id: int | None = None,
     platform: str | None = None,
     platform_chat_id: str | None = None,
 ) -> Project:
     """Create a new renovation project.
 
     Args:
+        tenant_id: Tenant this project belongs to (for multi-tenant SaaS)
         platform: Messaging platform ("telegram", "whatsapp", etc.)
         platform_chat_id: Chat/group ID on the platform (string for portability)
     """
@@ -56,6 +124,7 @@ async def create_project(
         area_sqm=area_sqm,
         renovation_type=renovation_type,
         total_budget=total_budget,
+        tenant_id=tenant_id,
     )
     # Route chat ID to the correct platform column
     if platform == "telegram" and platform_chat_id:
@@ -131,17 +200,24 @@ async def get_project_with_stages(
 async def get_user_projects(
     session: AsyncSession,
     user_id: int,
+    *,
+    tenant_id: int | None = None,
 ) -> Sequence[Project]:
-    """Get all active projects where the user has a role (newest first)."""
-    result = await session.execute(
+    """Get all active projects where the user has a role (newest first).
+
+    If tenant_id is provided, only returns projects for that tenant.
+    """
+    stmt = (
         select(Project)
         .join(ProjectRole)
         .where(
             ProjectRole.user_id == user_id,
             Project.is_active == True,  # noqa: E712
         )
-        .order_by(Project.created_at.desc())
     )
+    if tenant_id is not None:
+        stmt = stmt.where(Project.tenant_id == tenant_id)
+    result = await session.execute(stmt.order_by(Project.created_at.desc()))
     return result.scalars().all()
 
 
@@ -754,9 +830,14 @@ async def get_project_role_user_ids(
 
 async def get_all_active_projects(
     session: AsyncSession,
+    *,
+    tenant_id: int | None = None,
 ) -> Sequence[Project]:
-    """Get all active projects with their stages loaded."""
-    result = await session.execute(
+    """Get all active projects with their stages loaded.
+
+    If tenant_id is provided, only returns projects for that tenant.
+    """
+    stmt = (
         select(Project)
         .where(Project.is_active == True)  # noqa: E712
         .options(
@@ -765,6 +846,9 @@ async def get_all_active_projects(
             selectinload(Project.roles),
         )
     )
+    if tenant_id is not None:
+        stmt = stmt.where(Project.tenant_id == tenant_id)
+    result = await session.execute(stmt)
     return result.scalars().all()
 
 

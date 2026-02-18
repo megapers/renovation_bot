@@ -35,6 +35,7 @@ async def create_renovation_project(
     area_sqm: float | None = None,
     renovation_type: RenovationType,
     total_budget: float | None = None,
+    tenant_id: int | None = None,
     platform: str | None = None,
     platform_chat_id: str | None = None,
     custom_items: list[str] | None = None,
@@ -47,6 +48,7 @@ async def create_renovation_project(
     4. Add parallel stages for custom items (if any)
 
     Args:
+        tenant_id: Tenant this project belongs to (for multi-tenant SaaS)
         platform: Messaging platform identifier ("telegram", "whatsapp")
         platform_chat_id: Chat/group ID on the platform (as string)
 
@@ -60,6 +62,7 @@ async def create_renovation_project(
         area_sqm=area_sqm,
         renovation_type=renovation_type,
         total_budget=total_budget,
+        tenant_id=tenant_id,
         platform=platform,
         platform_chat_id=platform_chat_id,
     )

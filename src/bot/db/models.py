@@ -2,8 +2,9 @@
 SQLAlchemy ORM models for the Renovation Chatbot.
 
 This module defines the complete database schema:
+- Tenant       — a bot instance / customer (multi-tenant SaaS)
 - User         — anyone who interacts with the bot (client, tradesperson, expert)
-- Project      — a renovation project ("passport")
+- Project      — a renovation project ("passport"), scoped to a tenant
 - ProjectRole  — links a user to a project with a specific role
 - Stage        — a major work phase (e.g. Demolition, Electrical)
 - SubStage     — a task within a stage (e.g. "Remove bathroom tiles")
@@ -104,6 +105,29 @@ class MessageType(str, enum.Enum):
 # ── Models ────────────────────────────────────────────────────
 
 
+class Tenant(Base):
+    """
+    A bot instance / customer account for multi-tenant SaaS.
+
+    Each tenant gets their own Telegram bot token and identity.
+    All projects, messages, and embeddings are scoped to a tenant.
+    Users can exist across tenants (e.g. a tradesperson working on
+    multiple customers' projects), linked through ProjectRole.
+    """
+
+    __tablename__ = "tenants"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255))  # Display name, e.g. "Remont Pro Bot"
+    telegram_bot_token: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    telegram_bot_username: Mapped[str | None] = mapped_column(String(100))  # Resolved at startup
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    projects: Mapped[list["Project"]] = relationship(back_populates="tenant")
+
+
 class User(Base):
     """A person who interacts with the bot (across any platform)."""
 
@@ -127,6 +151,9 @@ class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
     name: Mapped[str] = mapped_column(String(255))
     address: Mapped[str | None] = mapped_column(Text)
     area_sqm: Mapped[float | None] = mapped_column(Numeric(8, 2))
@@ -141,6 +168,7 @@ class Project(Base):
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
 
     # Relationships
+    tenant: Mapped["Tenant | None"] = relationship(back_populates="projects")
     roles: Mapped[list["ProjectRole"]] = relationship(back_populates="project")
     stages: Mapped[list["Stage"]] = relationship(back_populates="project", order_by="Stage.order")
     budget_items: Mapped[list["BudgetItem"]] = relationship(back_populates="project")
@@ -294,6 +322,9 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     platform: Mapped[str] = mapped_column(String(20))  # "telegram", "whatsapp"
@@ -334,6 +365,9 @@ class Embedding(Base):
     __tablename__ = "embeddings"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     content: Mapped[str] = mapped_column(Text)
     embedding = mapped_column(Vector(1536))  # text-embedding-3-small outputs 1536 dims

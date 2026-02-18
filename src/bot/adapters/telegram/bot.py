@@ -1,8 +1,10 @@
 """
 Telegram adapter — implements PlatformAdapter using aiogram 3.x.
 
-This is the ONLY module that imports aiogram. All platform-specific
-Telegram logic lives here, never in core/.
+Supports multi-tenant mode: each tenant gets its own Telegram bot identity,
+all sharing the same Dispatcher and handlers.  When TELEGRAM_BOT_TOKEN is
+set in .env, the bot runs in **single-tenant** mode for backward compatibility.
+When the tenants table has entries, all active tenants are started concurrently.
 """
 
 import logging
@@ -32,42 +34,64 @@ from bot.adapters.telegram.stage_handlers import router as stage_router
 from bot.config import settings
 from bot.core.notification_service import Notification
 from bot.core.scheduler import start_scheduler, stop_scheduler
+from bot.db.repositories import (
+    get_all_active_tenants,
+    get_tenant_by_bot_token,
+    create_tenant,
+    update_tenant_username,
+)
+from bot.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
 
 
 class TelegramAdapter(PlatformAdapter):
-    """Telegram implementation of the platform adapter."""
+    """Telegram implementation of the platform adapter.
+
+    Supports two modes:
+    - **Single-tenant**: Uses TELEGRAM_BOT_TOKEN from .env (backward compatible)
+    - **Multi-tenant**: Loads all active tenants from the DB and runs one bot per tenant
+
+    In multi-tenant mode, all bots share the same Dispatcher and handlers.
+    Each bot's updates carry a `tenant_id` kwarg so handlers can scope data.
+    """
 
     def __init__(self) -> None:
-        self.bot = Bot(
-            token=settings.telegram_bot_token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
         self.dp = Dispatcher()
+        self._bots: dict[int, Bot] = {}  # tenant_id -> Bot instance
+        self._tenant_ids: dict[int, int] = {}  # bot_id -> tenant_id
         self._register_routers()
 
     def _register_routers(self) -> None:
         """Attach all handler routers and middleware to the dispatcher."""
-        # Note: RoleMiddleware is registered as outer middleware in start()
-        # after MentionGateMiddleware, so that data["user"] is available
-        # to filters like RequireRegistration() (filters run before inner
-        # middleware but after outer middleware).
+        self.dp.include_router(group_router)
+        self.dp.include_router(handlers_router)
+        self.dp.include_router(project_router)
+        self.dp.include_router(stage_router)
+        self.dp.include_router(notification_router)
+        self.dp.include_router(role_router)
+        self.dp.include_router(budget_router)
+        self.dp.include_router(ai_router)
+        self.dp.include_router(report_router)
 
-        # Register routers in order of priority
-        self.dp.include_router(group_router)           # group chat events (bot added/removed)
-        self.dp.include_router(handlers_router)        # /start and general commands
-        self.dp.include_router(project_router)         # /newproject wizard
-        self.dp.include_router(stage_router)           # /stages, /launch
-        self.dp.include_router(notification_router)    # checkpoint approval, status changes
-        self.dp.include_router(role_router)            # /team, /invite, /myrole
-        self.dp.include_router(budget_router)          # /budget, /expenses
-        self.dp.include_router(ai_router)              # /ask, /parse, voice/photo handlers
-        self.dp.include_router(report_router)          # /report, /status, quick cmds (LAST)
+    @property
+    def bot(self) -> Bot:
+        """Primary bot (first registered, or single-tenant bot).
+
+        Used by code that needs a single Bot reference (e.g. scheduler
+        notifications). For multi-tenant notification dispatch, use
+        get_bot_for_tenant() instead.
+        """
+        if self._bots:
+            return next(iter(self._bots.values()))
+        raise RuntimeError("No bots registered")
+
+    def get_bot_for_tenant(self, tenant_id: int) -> Bot | None:
+        """Get the Bot instance for a specific tenant."""
+        return self._bots.get(tenant_id)
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""
-        # Map generic format_type to Telegram parse_mode
         parse_mode_map = {
             "html": ParseMode.HTML,
             "markdown": ParseMode.MARKDOWN_V2,
@@ -111,40 +135,130 @@ class TelegramAdapter(PlatformAdapter):
             raise ValueError(f"Download returned empty for: {file_ref}")
         return result.read()
 
+    async def _ensure_tenant_in_db(self, token: str) -> int:
+        """Ensure a tenant record exists for the given bot token. Returns tenant_id.
+
+        Also backfills any existing projects/messages/embeddings that have
+        NULL tenant_id (from before multi-tenant was enabled).
+        """
+        async with async_session_factory() as session:
+            tenant = await get_tenant_by_bot_token(session, token)
+            if not tenant:
+                tenant = await create_tenant(
+                    session, name="Default Bot", telegram_bot_token=token
+                )
+                await session.commit()
+
+            # Backfill orphaned records (tenant_id IS NULL)
+            from sqlalchemy import text
+            async with async_session_factory() as session:
+                for table in ("projects", "messages", "embeddings"):
+                    await session.execute(
+                        text(f"UPDATE {table} SET tenant_id = :tid WHERE tenant_id IS NULL"),
+                        {"tid": tenant.id},
+                    )
+                await session.commit()
+
+            return tenant.id
+
+    async def _create_bot(self, token: str, tenant_id: int) -> Bot:
+        """Create a Bot instance, resolve identity, store mapping."""
+        bot = Bot(
+            token=token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+        me = await bot.me()
+        logger.info(
+            "Bot identity: @%s (id=%d) for tenant_id=%d",
+            me.username, me.id, tenant_id,
+        )
+        self._bots[tenant_id] = bot
+        self._tenant_ids[me.id] = tenant_id
+
+        # Persist the resolved username
+        async with async_session_factory() as session:
+            await update_tenant_username(session, tenant_id, me.username or "")
+            await session.commit()
+
+        return bot
+
     async def start(self) -> None:
-        """Start polling for Telegram updates and launch the scheduler."""
+        """Start polling for Telegram updates and launch the scheduler.
+
+        In single-tenant mode (TELEGRAM_BOT_TOKEN set), creates one bot.
+        In multi-tenant mode, loads all active tenants from the DB.
+        """
         logger.info("Starting Telegram bot (polling mode)...")
 
-        # Resolve bot identity for mention-gating
-        me = await self.bot.me()
-        logger.info("Bot identity: @%s (id=%d)", me.username, me.id)
+        # ── Discover bots to run ──
+        bots_to_poll: list[Bot] = []
 
-        # Register mention-gate as OUTER middleware (runs before RoleMiddleware)
+        # Always register the .env token if present
+        if settings.telegram_bot_token:
+            tid = await self._ensure_tenant_in_db(settings.telegram_bot_token)
+            bot = await self._create_bot(settings.telegram_bot_token, tid)
+            bots_to_poll.append(bot)
+
+        # Load additional tenants from DB
+        async with async_session_factory() as session:
+            tenants = await get_all_active_tenants(session)
+
+        for tenant in tenants:
+            if tenant.id in self._bots:
+                continue  # Already registered (from .env token)
+            try:
+                bot = await self._create_bot(tenant.telegram_bot_token, tenant.id)
+                bots_to_poll.append(bot)
+            except Exception as e:
+                logger.error(
+                    "Failed to start bot for tenant %d (%s): %s",
+                    tenant.id, tenant.name, e,
+                )
+
+        if not bots_to_poll:
+            raise RuntimeError(
+                "No bots to run. Set TELEGRAM_BOT_TOKEN in .env "
+                "or add tenants to the database."
+            )
+
+        logger.info("Running %d bot(s)", len(bots_to_poll))
+
+        # ── Register middleware (once on the dispatcher) ──
+        # MentionGate needs bot identity — use first bot for gate config.
+        # In multi-bot mode, the gate checks the actual bot from each update.
+        primary = bots_to_poll[0]
+        me = await primary.me()
         self.dp.message.outer_middleware(
             MentionGateMiddleware(bot_id=me.id, bot_username=me.username or "")
         )
-
-        # Register RoleMiddleware as OUTER middleware so that data["user"],
-        # data["project"], and data["user_roles"] are available to filters
-        # like RequireRegistration().  Inner middleware runs AFTER filter
-        # evaluation, which is too late for filter-based checks.
-        # Order matters: MentionGate first (gates group noise), then Role.
         self.dp.message.outer_middleware(RoleMiddleware())
         self.dp.callback_query.outer_middleware(RoleMiddleware())
 
-        # Set up command menus for different chat types
-        await self._set_command_scopes()
+        # ── Set command scopes for each bot ──
+        for bot in bots_to_poll:
+            await self._set_command_scopes(bot)
 
-        # Start the background scheduler for deadline checks, reminders, etc.
+        # ── Inject tenant_id into every update via update.kwargs ──
+        @self.dp.update.outer_middleware()
+        async def inject_tenant_id(handler, event, data):
+            bot_obj = data.get("bot")
+            if bot_obj:
+                data["tenant_id"] = self._tenant_ids.get(bot_obj.id)
+            else:
+                data["tenant_id"] = None
+            return await handler(event, data)
+
+        # ── Start scheduler ──
         async def _send_notification(notification: Notification) -> None:
             await deliver_notification(notification, self.bot)
 
         start_scheduler(_send_notification)
         logger.info("Background scheduler started")
 
-        await self.dp.start_polling(self.bot)
+        # ── Start polling for all bots ──
+        await self.dp.start_polling(*bots_to_poll)
 
-    async def _set_command_scopes(self) -> None:
+    async def _set_command_scopes(self, bot: Bot) -> None:
         """Register different command menus for private and group chats."""
         # Private chat commands
         private_commands = [
@@ -176,23 +290,23 @@ class TelegramAdapter(PlatformAdapter):
         ]
 
         try:
-            # Default scope — shown when client doesn't support scoped commands
-            await self.bot.set_my_commands(private_commands)
-            # Private chat scope — overrides default in private chats
-            await self.bot.set_my_commands(
+            await bot.set_my_commands(private_commands)
+            await bot.set_my_commands(
                 private_commands,
                 scope=BotCommandScopeAllPrivateChats(),
             )
-            await self.bot.set_my_commands(
+            await bot.set_my_commands(
                 group_commands,
                 scope=BotCommandScopeAllGroupChats(),
             )
-            logger.info("Command scopes registered")
+            me = await bot.me()
+            logger.info("Command scopes registered for @%s", me.username)
         except Exception as e:
             logger.warning("Failed to set command scopes: %s", e)
 
     async def stop(self) -> None:
-        """Shut down the Telegram bot and scheduler gracefully."""
-        logger.info("Stopping Telegram bot...")
+        """Shut down all bots and the scheduler gracefully."""
+        logger.info("Stopping Telegram bot(s)...")
         stop_scheduler()
-        await self.bot.session.close()
+        for bot in self._bots.values():
+            await bot.session.close()

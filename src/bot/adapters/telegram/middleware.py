@@ -1,7 +1,8 @@
 """
-Telegram middleware for role-based access control.
+Telegram middleware for role-based access control and tenant resolution.
 
 This middleware runs before every handler and injects:
+  - `tenant_id`  — the tenant associated with this bot instance (or None)
   - `user`       — the User ORM object (or None)
   - `project`    — the Project linked to this chat (or None, for group chats)
   - `user_roles` — list of RoleType the user has in the project
@@ -36,10 +37,13 @@ logger = logging.getLogger(__name__)
 
 class RoleMiddleware(BaseMiddleware):
     """
-    Injects user, project, and role context into every handler.
+    Injects user, project, tenant, and role context into every handler.
 
     For private chats: user is loaded, project is None (unless FSM has project_id).
     For group chats: user is loaded, project is looked up via telegram_chat_id.
+
+    tenant_id is passed through from dispatcher-level kwargs (set by the
+    multi-bot launcher for each bot).
     """
 
     async def __call__(
@@ -59,6 +63,10 @@ class RoleMiddleware(BaseMiddleware):
             tg_user = event.from_user
             if event.message:
                 chat_id = event.message.chat.id
+
+        # Ensure tenant_id is always in data (may be set by multi-bot launcher)
+        if "tenant_id" not in data:
+            data["tenant_id"] = None
 
         if tg_user is None:
             # Can't identify user — pass through (e.g. channel posts)

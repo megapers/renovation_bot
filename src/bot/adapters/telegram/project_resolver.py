@@ -51,6 +51,7 @@ async def resolve_project(
     *,
     intent: str,
     picker_state: Any,
+    tenant_id: int | None = None,
     no_project_msg: str = (
         "У вас нет активных проектов.\n"
         "Создайте проект командой /newproject"
@@ -115,7 +116,7 @@ async def resolve_project(
             return None
 
         # ── Private chat ──
-        projects = await get_user_projects(session, user.id)
+        projects = await get_user_projects(session, user.id, tenant_id=tenant_id)
 
     if not projects:
         await message.answer(no_project_msg)  # type: ignore[union-attr]

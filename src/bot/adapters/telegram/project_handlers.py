@@ -384,7 +384,7 @@ async def _show_confirmation(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(ProjectCreation.confirming, F.data == "confirm:yes")
-async def confirm_project(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+async def confirm_project(callback: CallbackQuery, state: FSMContext, bot: Bot, **kwargs) -> None:
     """Create the project in the database."""
     await callback.answer("Создаю проект...")
     data = await state.get_data()
@@ -421,6 +421,7 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext, bot: Bot) 
             area_sqm=data.get("area_sqm"),
             renovation_type=RenovationType(data["renovation_type"]),
             total_budget=data.get("total_budget"),
+            tenant_id=kwargs.get("tenant_id"),
             platform="telegram",
             platform_chat_id=platform_chat_id,
             custom_items=data.get("custom_items") or None,
