@@ -39,7 +39,7 @@ def _is_admin(telegram_id: int) -> bool:
 
 
 @router.message(Command("addbot"))
-async def cmd_addbot(message: Message) -> None:
+async def cmd_addbot(message: Message, **kwargs) -> None:
     """
     /addbot <token> — Register a new Telegram bot as a tenant.
 
@@ -113,13 +113,31 @@ async def cmd_addbot(message: Message) -> None:
         await session.commit()
         tenant_id = tenant.id
 
+    # Hot-start polling — no restart needed
+    try:
+        adapter = kwargs.get("adapter")
+        if adapter:
+            await adapter.hot_add_bot(token, tenant_id)
+            status_line = "🟢 Бот запущен и готов к работе!"
+        else:
+            status_line = (
+                "⚠️ Бот зарегистрирован, но не удалось запустить автоматически.\n"
+                "Перезапустите процесс (<code>python -m bot</code>)."
+            )
+    except Exception as e:
+        logger.error("Hot-start failed for tenant %d: %s", tenant_id, e)
+        status_line = (
+            "⚠️ Бот зарегистрирован, но не удалось запустить автоматически.\n"
+            f"Ошибка: {e}\n"
+            "Перезапустите процесс (<code>python -m bot</code>)."
+        )
+
     await message.answer(
         f"✅ <b>Бот зарегистрирован!</b>\n\n"
         f"🤖 Имя: {bot_name}\n"
         f"👤 Username: @{bot_username}\n"
         f"🆔 Tenant ID: {tenant_id}\n\n"
-        f"⚡ Перезапустите процесс (<code>python -m bot</code>), "
-        f"чтобы новый бот начал работать."
+        f"{status_line}"
     )
     logger.info(
         "Admin %d registered new tenant: @%s (tenant_id=%d)",

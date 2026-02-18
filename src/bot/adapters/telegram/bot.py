@@ -7,6 +7,7 @@ set in .env, the bot runs in **single-tenant** mode for backward compatibility.
 When the tenants table has entries, all active tenants are started concurrently.
 """
 
+import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
@@ -61,6 +62,7 @@ class TelegramAdapter(PlatformAdapter):
         self.dp = Dispatcher()
         self._bots: dict[int, Bot] = {}  # tenant_id -> Bot instance
         self._tenant_ids: dict[int, int] = {}  # bot_id -> tenant_id
+        self._polling_tasks: dict[int, "asyncio.Task[None]"] = {}  # tenant_id -> polling task
         self._register_routers()
 
     def _register_routers(self) -> None:
@@ -91,6 +93,31 @@ class TelegramAdapter(PlatformAdapter):
     def get_bot_for_tenant(self, tenant_id: int) -> Bot | None:
         """Get the Bot instance for a specific tenant."""
         return self._bots.get(tenant_id)
+
+    async def hot_add_bot(self, token: str, tenant_id: int) -> str:
+        """Register and start polling a new bot without restarting the process.
+
+        Called by /addbot after the tenant is saved to the DB.
+        Returns the bot username on success.
+
+        Raises RuntimeError if the bot can't be started.
+        """
+        if tenant_id in self._bots:
+            bot = self._bots[tenant_id]
+            me = await bot.me()
+            return me.username or ""
+
+        bot = await self._create_bot(token, tenant_id)
+        await self._set_command_scopes(bot)
+
+        # Start polling for this bot in a background task
+        task = asyncio.create_task(
+            self.dp._polling(bot=bot, handle_as_tasks=True),
+            name=f"polling_tenant_{tenant_id}",
+        )
+        self._polling_tasks[tenant_id] = task
+        logger.info("Hot-started polling for tenant_id=%d", tenant_id)
+        return (await bot.me()).username or ""
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a text message via Telegram."""
@@ -191,6 +218,9 @@ class TelegramAdapter(PlatformAdapter):
         In multi-tenant mode, loads all active tenants from the DB.
         """
         logger.info("Starting Telegram bot (polling mode)...")
+
+        # Store adapter reference so handlers can call hot_add_bot()
+        self.dp["adapter"] = self
 
         # ── Discover bots to run ──
         bots_to_poll: list[Bot] = []
@@ -310,5 +340,8 @@ class TelegramAdapter(PlatformAdapter):
         """Shut down all bots and the scheduler gracefully."""
         logger.info("Stopping Telegram bot(s)...")
         stop_scheduler()
+        # Cancel any hot-started polling tasks
+        for task in self._polling_tasks.values():
+            task.cancel()
         for bot in self._bots.values():
             await bot.session.close()

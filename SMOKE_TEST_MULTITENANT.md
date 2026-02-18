@@ -59,7 +59,7 @@ Now open a **private chat** with your main bot (`@renovationakil_bot`) and regis
 👤 Username: @remont_alpha_bot
 🆔 Tenant ID: 2
 
-⚡ Перезапустите процесс (python -m bot), чтобы новый бот начал работать.
+🟢 Бот запущен и готов к работе!
 ```
 
 **Register Bot B:**
@@ -88,23 +88,9 @@ Now open a **private chat** with your main bot (`@renovationakil_bot`) and regis
 Всего: 3
 ```
 
-### 4. Restart the bot
+Both new bots are **already running** — no restart needed. You can immediately proceed to testing.
 
-Press `Ctrl+C` to stop, then start again:
-
-```bash
-python -m bot
-```
-
-**Expected in logs:**
-```
-INFO  Bot identity: @renovationakil_bot   (id=...) for tenant_id=1
-INFO  Bot identity: @remont_alpha_bot     (id=...) for tenant_id=2
-INFO  Bot identity: @remont_beta_bot      (id=...) for tenant_id=3
-INFO  Running 3 bot(s)
-```
-
-### 5. Create two Telegram groups
+### 4. Create two Telegram groups
 
 - **Group A** — e.g. "Ремонт Альфа"
 - **Group B** — e.g. "Ремонт Бета"
