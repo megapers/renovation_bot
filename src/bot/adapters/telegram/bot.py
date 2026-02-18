@@ -275,7 +275,12 @@ class TelegramAdapter(PlatformAdapter):
         async def inject_tenant_id(handler, event, data):
             bot_obj = data.get("bot")
             if bot_obj:
-                data["tenant_id"] = self._tenant_ids.get(bot_obj.id)
+                tid = self._tenant_ids.get(bot_obj.id)
+                data["tenant_id"] = tid
+                # Also store in FSM state so project_resolver can read it
+                fsm_context = data.get("state")
+                if fsm_context and tid is not None:
+                    await fsm_context.update_data(_tenant_id=tid)
             else:
                 data["tenant_id"] = None
             return await handler(event, data)

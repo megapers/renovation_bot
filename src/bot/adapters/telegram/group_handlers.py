@@ -161,7 +161,7 @@ async def handle_startgroup_deeplink(message: Message) -> None:
 
 
 @router.message(Command("link"), F.chat.type.in_({"group", "supergroup"}))
-async def cmd_link(message: Message, state: FSMContext) -> None:
+async def cmd_link(message: Message, state: FSMContext, **kwargs) -> None:
     """
     Link this group chat to a renovation project.
 
@@ -192,7 +192,7 @@ async def cmd_link(message: Message, state: FSMContext) -> None:
             )
             return
 
-        projects = await get_user_projects(session, user.id)
+        projects = await get_user_projects(session, user.id, tenant_id=kwargs.get("tenant_id"))
 
     if not projects:
         await message.answer("У вас нет проектов для привязки.")

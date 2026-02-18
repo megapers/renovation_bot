@@ -60,26 +60,15 @@ async def resolve_project(
     """
     Resolve the active project for the current user/chat.
 
-    Parameters
-    ----------
-    event : Message | CallbackQuery
-        The incoming Telegram event.
-    state : FSMContext
-        aiogram FSM context — used to store picker intent.
-    intent : str
-        An identifier for the caller, e.g. "stages", "budget", "report".
-        Stored in FSM data so the picker callback knows who to dispatch to.
-    picker_state : State
-        The FSM state to enter when showing the project picker.
-    no_project_msg : str
-        Message to show when the user has zero projects.
-
-    Returns
-    -------
-    ResolvedProject | None
-        The resolved project wrapper, or None if a picker was shown
-        (callback will arrive separately) or the user has no projects.
+    tenant_id is read from FSM state (injected by multi-tenant middleware)
+    unless explicitly passed. This ensures all handlers get tenant-scoped
+    project lists without needing to pass tenant_id manually.
     """
+    # Read tenant_id from FSM state if not passed explicitly
+    if tenant_id is None:
+        fsm_data = await state.get_data()
+        tenant_id = fsm_data.get("_tenant_id")
+
     # Determine chat + target message for replying
     if isinstance(event, CallbackQuery):
         message = event.message

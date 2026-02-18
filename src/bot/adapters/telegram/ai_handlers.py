@@ -47,6 +47,7 @@ router = Router(name="ai_handlers")
 
 async def _resolve_project_for_storage(
     message: TgMessage,
+    tenant_id: int | None = None,
 ) -> tuple[int | None, int | None]:
     """
     Resolve project and user for message storage (voice/photo/text).
@@ -75,7 +76,7 @@ async def _resolve_project_for_storage(
             return user.id, project.id if project else None
 
         # Private chat: use first (newest) project
-        projects = await repo.get_user_projects(session, user.id)
+        projects = await repo.get_user_projects(session, user.id, tenant_id=tenant_id)
         if projects:
             return user.id, projects[0].id
 
@@ -344,7 +345,7 @@ async def handle_chat_message(message: TgMessage, state: FSMContext, **kwargs) -
             return
 
     # ── Always store for RAG ──
-    user_id, project_id = await _resolve_project_for_storage(message)
+    user_id, project_id = await _resolve_project_for_storage(message, tenant_id=kwargs.get("tenant_id"))
     await _store_and_embed_message(
         project_id=project_id,
         user_id=user_id,
@@ -642,7 +643,7 @@ async def handle_voice_message(message: TgMessage, bot: Bot, **kwargs) -> None:
         return
 
     silent = kwargs.get("gate_silent", False)
-    user_id, project_id = await _resolve_project_for_storage(message)
+    user_id, project_id = await _resolve_project_for_storage(message, tenant_id=kwargs.get("tenant_id"))
 
     # Download and transcribe
     file_id = voice.file_id
@@ -716,7 +717,7 @@ async def handle_photo_message(message: TgMessage, bot: Bot, **kwargs) -> None:
     caption = message.caption
 
     silent = kwargs.get("gate_silent", False)
-    user_id, project_id = await _resolve_project_for_storage(message)
+    user_id, project_id = await _resolve_project_for_storage(message, tenant_id=kwargs.get("tenant_id"))
 
     # Download and describe
     file_id = photo.file_id

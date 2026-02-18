@@ -199,7 +199,7 @@ async def _send_deadline(target: Message, project_id: int) -> None:
 
 
 @router.message(Command("mystage"))
-async def cmd_my_stage(message: Message, state: FSMContext) -> None:
+async def cmd_my_stage(message: Message, state: FSMContext, **kwargs) -> None:
     """/mystage — show stages assigned to current user."""
     await state.clear()
 
@@ -230,7 +230,7 @@ async def cmd_my_stage(message: Message, state: FSMContext) -> None:
             return
 
         # Private chat: show stages across all projects
-        projects = await repo.get_user_projects(session, user.id)
+        projects = await repo.get_user_projects(session, user.id, tenant_id=kwargs.get("tenant_id"))
 
     if not projects:
         await message.answer("У вас нет активных проектов.")

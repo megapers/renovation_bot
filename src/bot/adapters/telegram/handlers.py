@@ -81,7 +81,7 @@ async def handle_start(message: Message) -> None:
 
 
 @router.message(Command("myprojects"))
-async def cmd_myprojects(message: Message) -> None:
+async def cmd_myprojects(message: Message, **kwargs) -> None:
     """
     /myprojects — list all projects the user is a member of.
 
@@ -99,7 +99,7 @@ async def cmd_myprojects(message: Message) -> None:
             )
             return
 
-        projects = await get_user_projects(session, user.id)
+        projects = await get_user_projects(session, user.id, tenant_id=kwargs.get("tenant_id"))
 
     if not projects:
         await message.answer(
