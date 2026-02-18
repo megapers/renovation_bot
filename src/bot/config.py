@@ -105,6 +105,18 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     debug: bool = False
 
+    # ── Admin ─────────────────────────────────────────────────
+    # Comma-separated Telegram user IDs allowed to use /addbot, /listbots, /removebot.
+    # Example: ADMIN_TELEGRAM_IDS=610379797,123456789
+    admin_telegram_ids: str = ""
+
+    @property
+    def admin_ids(self) -> set[int]:
+        """Parsed set of admin Telegram user IDs."""
+        if not self.admin_telegram_ids:
+            return set()
+        return {int(x.strip()) for x in self.admin_telegram_ids.split(",") if x.strip()}
+
 
 # Singleton — import this wherever config is needed
 settings = Settings()

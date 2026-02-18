@@ -15,6 +15,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 
 from bot.adapters.base import OutgoingMessage, PlatformAdapter
+from bot.adapters.telegram.admin_handlers import router as admin_router
 from bot.adapters.telegram.ai_handlers import router as ai_router
 from bot.adapters.telegram.budget_handlers import router as budget_router
 from bot.adapters.telegram.group_handlers import router as group_router
@@ -64,6 +65,7 @@ class TelegramAdapter(PlatformAdapter):
 
     def _register_routers(self) -> None:
         """Attach all handler routers and middleware to the dispatcher."""
+        self.dp.include_router(admin_router)           # /addbot, /listbots (admin only)
         self.dp.include_router(group_router)
         self.dp.include_router(handlers_router)
         self.dp.include_router(project_router)
