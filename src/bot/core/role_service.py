@@ -75,14 +75,25 @@ ROLE_PERMISSIONS: dict[RoleType, set[Permission]] = {
         Permission.VIEW_REPORTS,
         Permission.REQUEST_REPORT,
         Permission.VIEW_MY_STAGE,
+        Permission.SEND_STATUS,
         Permission.REQUEST_EXPERT,
     },
     RoleType.CO_OWNER: {
+        Permission.EDIT_PROJECT,
+        Permission.LAUNCH_PROJECT,
+        Permission.INVITE_MEMBER,
         Permission.VIEW_STAGES,
+        Permission.EDIT_STAGE,
+        Permission.UPDATE_STATUS,
+        Permission.ADD_SUB_STAGES,
+        Permission.APPROVE_CHECKPOINT,
         Permission.VIEW_BUDGET,
+        Permission.EDIT_BUDGET,
+        Permission.CONFIRM_BUDGET,
         Permission.VIEW_REPORTS,
         Permission.REQUEST_REPORT,
         Permission.VIEW_MY_STAGE,
+        Permission.SEND_STATUS,
         Permission.REQUEST_EXPERT,
     },
     RoleType.FOREMAN: {
@@ -103,6 +114,7 @@ ROLE_PERMISSIONS: dict[RoleType, set[Permission]] = {
         Permission.VIEW_MY_STAGE,
         Permission.SEND_STATUS,
         Permission.PROPOSE_WORK,
+        Permission.VIEW_REPORTS,
     },
     RoleType.DESIGNER: {
         Permission.VIEW_STAGES,
@@ -114,6 +126,7 @@ ROLE_PERMISSIONS: dict[RoleType, set[Permission]] = {
         Permission.SEND_STATUS,
     },
     RoleType.SUPPLIER: {
+        Permission.VIEW_STAGES,
         Permission.VIEW_MY_STAGE,
         Permission.SEND_STATUS,
     },
@@ -124,7 +137,6 @@ ROLE_PERMISSIONS: dict[RoleType, set[Permission]] = {
     },
     RoleType.VIEWER: {
         Permission.VIEW_STAGES,
-        Permission.VIEW_BUDGET,
         Permission.VIEW_REPORTS,
     },
 }

@@ -20,6 +20,9 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.adapters.telegram.filters import RequirePermission
+from bot.core.role_service import Permission
+
 from bot.adapters.telegram.formatters import (
     format_deadline_report,
     format_my_stages,
@@ -71,7 +74,7 @@ async def _resolve_for_report(
 # ═══════════════════════════════════════════════════════════════
 
 
-@router.message(Command("report"))
+@router.message(Command("report"), RequirePermission(Permission.VIEW_REPORTS))
 async def cmd_report(message: Message, state: FSMContext) -> None:
     """/report — generate a full weekly-style report."""
     await state.clear()

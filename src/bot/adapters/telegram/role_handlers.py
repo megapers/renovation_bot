@@ -136,7 +136,7 @@ async def _show_myrole(target: Message, user: User, project_id: int) -> None:
 # ═══════════════════════════════════════════════════════════════
 
 
-@router.message(Command("invite"), RequireRegistration())
+@router.message(Command("invite"), RequireRegistration(), RequirePermission(Permission.INVITE_MEMBER))
 async def cmd_invite(message: Message, state: FSMContext) -> None:
     """Start the invitation flow."""
     await state.clear()

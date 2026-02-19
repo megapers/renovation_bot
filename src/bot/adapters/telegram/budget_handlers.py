@@ -16,6 +16,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.adapters.telegram.filters import RequirePermission
+from bot.core.role_service import Permission
 from bot.adapters.telegram.formatters import (
     format_budget_item_detail,
     format_budget_overview,
@@ -124,7 +126,7 @@ async def _show_budget_overview(
 # ═══════════════════════════════════════════════════════════════
 
 
-@router.message(Command("budget"))
+@router.message(Command("budget"), RequirePermission(Permission.VIEW_BUDGET))
 async def cmd_budget(message: Message, state: FSMContext) -> None:
     """
     /budget — show project budget overview.
@@ -142,7 +144,7 @@ async def cmd_budget(message: Message, state: FSMContext) -> None:
         await _show_budget_overview(message, state, resolved.id)
 
 
-@router.message(Command("expenses"))
+@router.message(Command("expenses"), RequirePermission(Permission.EDIT_BUDGET))
 async def cmd_expenses(message: Message, state: FSMContext) -> None:
     """
     /expenses — start adding a new expense.

@@ -13,6 +13,8 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from bot.adapters.telegram.filters import RequirePermission
+from bot.core.role_service import Permission
 from bot.db.models import User
 from bot.db.repositories import get_user_by_telegram_id, get_user_projects
 from bot.db.session import async_session_factory
@@ -145,7 +147,7 @@ async def cmd_myprojects(message: Message, **kwargs) -> None:
 # ═══════════════════════════════════════════════════════════════
 
 
-@router.message(Command("deleteproject"))
+@router.message(Command("deleteproject"), RequirePermission(Permission.CLOSE_PROJECT))
 async def cmd_deleteproject(message: Message, state: FSMContext, **kwargs) -> None:
     """
     /deleteproject — delete a project and all its data.

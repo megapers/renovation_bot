@@ -18,6 +18,9 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.adapters.telegram.filters import RequirePermission
+from bot.core.role_service import Permission
+
 from bot.adapters.telegram.keyboards import (
     back_to_stage_keyboard,
     date_method_keyboard,
@@ -128,7 +131,7 @@ async def cmd_stages(message: Message, state: FSMContext) -> None:
         await _show_stages_list(message, state, resolved.id)
 
 
-@router.message(Command("launch"))
+@router.message(Command("launch"), RequirePermission(Permission.LAUNCH_PROJECT))
 async def cmd_launch(message: Message, state: FSMContext) -> None:
     """
     /launch — show project launch summary and confirmation.
