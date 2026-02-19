@@ -60,14 +60,16 @@ async def resolve_project(
     """
     Resolve the active project for the current user/chat.
 
-    tenant_id is read from FSM state (injected by multi-tenant middleware)
-    unless explicitly passed. This ensures all handlers get tenant-scoped
+    tenant_id is resolved from the bot identity (BOT_TENANT_MAP) unless
+    explicitly passed. This ensures all handlers get tenant-scoped
     project lists without needing to pass tenant_id manually.
     """
-    # Read tenant_id from FSM state if not passed explicitly
+    # Resolve tenant_id from the bot handling this event
     if tenant_id is None:
-        fsm_data = await state.get_data()
-        tenant_id = fsm_data.get("_tenant_id")
+        from bot.adapters.telegram.bot import BOT_TENANT_MAP
+        bot_obj = event.bot
+        if bot_obj:
+            tenant_id = BOT_TENANT_MAP.get(bot_obj.id)
 
     # Determine chat + target message for replying
     if isinstance(event, CallbackQuery):

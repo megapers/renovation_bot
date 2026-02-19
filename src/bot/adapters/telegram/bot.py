@@ -46,6 +46,11 @@ from bot.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
 
+# Module-level mapping of bot_id → tenant_id.
+# Populated by TelegramAdapter at startup and via hot_add_bot().
+# Used by project_resolver to get tenant context from the bot object.
+BOT_TENANT_MAP: dict[int, int] = {}
+
 
 class TelegramAdapter(PlatformAdapter):
     """Telegram implementation of the platform adapter.
@@ -203,6 +208,7 @@ class TelegramAdapter(PlatformAdapter):
         )
         self._bots[tenant_id] = bot
         self._tenant_ids[me.id] = tenant_id
+        BOT_TENANT_MAP[me.id] = tenant_id
 
         # Persist the resolved username
         async with async_session_factory() as session:
@@ -275,12 +281,7 @@ class TelegramAdapter(PlatformAdapter):
         async def inject_tenant_id(handler, event, data):
             bot_obj = data.get("bot")
             if bot_obj:
-                tid = self._tenant_ids.get(bot_obj.id)
-                data["tenant_id"] = tid
-                # Also store in FSM state so project_resolver can read it
-                fsm_context = data.get("state")
-                if fsm_context and tid is not None:
-                    await fsm_context.update_data(_tenant_id=tid)
+                data["tenant_id"] = self._tenant_ids.get(bot_obj.id)
             else:
                 data["tenant_id"] = None
             return await handler(event, data)

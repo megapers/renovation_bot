@@ -101,6 +101,14 @@ class MentionGateMiddleware(BaseMiddleware):
         if event.text and event.text.startswith("/"):
             return await handler(event, data)
 
+        # ── Always pass when user is in an active FSM flow ──
+        # (e.g. expense wizard, project creation — user is mid-conversation)
+        fsm_context = data.get("state")
+        if fsm_context:
+            current_state = await fsm_context.get_state()
+            if current_state is not None:
+                return await handler(event, data)
+
         # ── Check if directed at the bot ──
         if self._is_directed_at_bot(event):
             return await handler(event, data)
