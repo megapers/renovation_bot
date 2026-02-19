@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 # Used by project_resolver to get tenant context from the bot object.
 BOT_TENANT_MAP: dict[int, int] = {}
 
+# The admin bot's Telegram ID (set at startup from TELEGRAM_BOT_TOKEN).
+# Used by handlers to check if a command is on the admin bot.
+ADMIN_BOT_ID: int | None = None
+
 
 class TelegramAdapter(PlatformAdapter):
     """Telegram implementation of the platform adapter.
@@ -68,6 +72,7 @@ class TelegramAdapter(PlatformAdapter):
         self._bots: dict[int, Bot] = {}  # tenant_id -> Bot instance
         self._tenant_ids: dict[int, int] = {}  # bot_id -> tenant_id
         self._polling_tasks: dict[int, "asyncio.Task[None]"] = {}  # tenant_id -> polling task
+        self._admin_bot_id: int | None = None  # bot_id of the admin bot (.env token)
         self._register_routers()
 
     def _register_routers(self) -> None:
@@ -231,10 +236,14 @@ class TelegramAdapter(PlatformAdapter):
         # ── Discover bots to run ──
         bots_to_poll: list[Bot] = []
 
-        # Always register the .env token if present
+        # Always register the .env token as the ADMIN bot
         if settings.telegram_bot_token:
             tid = await self._ensure_tenant_in_db(settings.telegram_bot_token)
             bot = await self._create_bot(settings.telegram_bot_token, tid)
+            me = await bot.me()
+            self._admin_bot_id = me.id
+            global ADMIN_BOT_ID
+            ADMIN_BOT_ID = me.id
             bots_to_poll.append(bot)
 
         # Load additional tenants from DB
@@ -297,35 +306,51 @@ class TelegramAdapter(PlatformAdapter):
         await self.dp.start_polling(*bots_to_poll)
 
     async def _set_command_scopes(self, bot: Bot) -> None:
-        """Register different command menus for private and group chats."""
-        # Private chat commands
-        private_commands = [
-            BotCommand(command="newproject", description="Создать новый проект"),
-            BotCommand(command="myprojects", description="Мои проекты"),
-            BotCommand(command="stages", description="Этапы ремонта"),
-            BotCommand(command="budget", description="Бюджет проекта"),
-            BotCommand(command="expenses", description="Добавить расход"),
-            BotCommand(command="report", description="Отчёт по проекту"),
-            BotCommand(command="status", description="Статус проекта"),
-            BotCommand(command="team", description="Команда проекта"),
-            BotCommand(command="invite", description="Пригласить участника"),
-            BotCommand(command="myrole", description="Моя роль"),
-            BotCommand(command="chat", description="AI-чат о проекте"),
-            BotCommand(command="launch", description="Запустить проект"),
-        ]
+        """Register different command menus for admin bot vs tenant bots."""
+        me = await bot.me()
+        is_admin = me.id == self._admin_bot_id
 
-        # Group chat commands
-        group_commands = [
-            BotCommand(command="link", description="Привязать группу к проекту"),
-            BotCommand(command="stages", description="Этапы ремонта"),
-            BotCommand(command="budget", description="Бюджет проекта"),
-            BotCommand(command="expenses", description="Добавить расход"),
-            BotCommand(command="status", description="Статус проекта"),
-            BotCommand(command="report", description="Отчёт по проекту"),
-            BotCommand(command="team", description="Команда проекта"),
-            BotCommand(command="myrole", description="Моя роль"),
-            BotCommand(command="chat", description="AI-чат о проекте"),
-        ]
+        if is_admin:
+            # Admin bot — tenant management commands only
+            private_commands = [
+                BotCommand(command="addbot", description="Зарегистрировать нового бота"),
+                BotCommand(command="listbots", description="Список всех ботов"),
+                BotCommand(command="removebot", description="Деактивировать бота"),
+                BotCommand(command="start", description="Начало работы"),
+            ]
+            group_commands = []  # Admin bot not used in groups
+        else:
+            # Tenant bot — renovation project commands
+            private_commands = [
+                BotCommand(command="start", description="Начало работы"),
+                BotCommand(command="newproject", description="Создать новый проект"),
+                BotCommand(command="myprojects", description="Мои проекты"),
+                BotCommand(command="deleteproject", description="Удалить проект"),
+                BotCommand(command="stages", description="Этапы ремонта"),
+                BotCommand(command="budget", description="Бюджет проекта"),
+                BotCommand(command="expenses", description="Добавить расход"),
+                BotCommand(command="report", description="Отчёт по проекту"),
+                BotCommand(command="status", description="Статус проекта"),
+                BotCommand(command="team", description="Команда проекта"),
+                BotCommand(command="invite", description="Пригласить участника"),
+                BotCommand(command="myrole", description="Моя роль"),
+                BotCommand(command="ask", description="Задать вопрос AI"),
+                BotCommand(command="chat", description="AI-чат о проекте"),
+                BotCommand(command="launch", description="Запустить проект"),
+            ]
+
+            group_commands = [
+                BotCommand(command="link", description="Привязать группу к проекту"),
+                BotCommand(command="stages", description="Этапы ремонта"),
+                BotCommand(command="budget", description="Бюджет проекта"),
+                BotCommand(command="expenses", description="Добавить расход"),
+                BotCommand(command="status", description="Статус проекта"),
+                BotCommand(command="report", description="Отчёт по проекту"),
+                BotCommand(command="team", description="Команда проекта"),
+                BotCommand(command="myrole", description="Моя роль"),
+                BotCommand(command="ask", description="Задать вопрос AI"),
+                BotCommand(command="chat", description="AI-чат о проекте"),
+            ]
 
         try:
             await bot.set_my_commands(private_commands)
@@ -333,12 +358,12 @@ class TelegramAdapter(PlatformAdapter):
                 private_commands,
                 scope=BotCommandScopeAllPrivateChats(),
             )
-            await bot.set_my_commands(
-                group_commands,
-                scope=BotCommandScopeAllGroupChats(),
-            )
-            me = await bot.me()
-            logger.info("Command scopes registered for @%s", me.username)
+            if group_commands:
+                await bot.set_my_commands(
+                    group_commands,
+                    scope=BotCommandScopeAllGroupChats(),
+                )
+            logger.info("Command scopes registered for @%s (%s)", me.username, "admin" if is_admin else "tenant")
         except Exception as e:
             logger.warning("Failed to set command scopes: %s", e)
 

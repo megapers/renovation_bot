@@ -38,6 +38,12 @@ def _is_admin(telegram_id: int) -> bool:
     return telegram_id in settings.admin_ids
 
 
+def _is_admin_bot(message: Message) -> bool:
+    """Check if this message is being handled by the admin bot."""
+    from bot.adapters.telegram.bot import ADMIN_BOT_ID
+    return message.bot is not None and message.bot.id == ADMIN_BOT_ID
+
+
 @router.message(Command("addbot"))
 async def cmd_addbot(message: Message, **kwargs) -> None:
     """
@@ -46,11 +52,11 @@ async def cmd_addbot(message: Message, **kwargs) -> None:
     The token is obtained from @BotFather after creating a new bot.
     The new bot will start polling on next restart.
 
-    Only available to admin users (ADMIN_TELEGRAM_IDS in .env).
+    Only available to admin users on the admin bot.
     """
     tg_user = message.from_user
-    if tg_user is None or not _is_admin(tg_user.id):
-        return  # Silently ignore for non-admins
+    if tg_user is None or not _is_admin(tg_user.id) or not _is_admin_bot(message):
+        return
 
     args = (message.text or "").split(maxsplit=1)
     if len(args) < 2 or not args[1].strip():
@@ -150,10 +156,10 @@ async def cmd_listbots(message: Message) -> None:
     """
     /listbots — List all registered bot tenants.
 
-    Only available to admin users (ADMIN_TELEGRAM_IDS in .env).
+    Only available to admin users on the admin bot.
     """
     tg_user = message.from_user
-    if tg_user is None or not _is_admin(tg_user.id):
+    if tg_user is None or not _is_admin(tg_user.id) or not _is_admin_bot(message):
         return
 
     async with async_session_factory() as session:
@@ -186,10 +192,10 @@ async def cmd_removebot(message: Message) -> None:
     /removebot <id> — Deactivate a tenant bot.
 
     The bot will stop polling on next restart.
-    Only available to admin users (ADMIN_TELEGRAM_IDS in .env).
+    Only available to admin users on the admin bot.
     """
     tg_user = message.from_user
-    if tg_user is None or not _is_admin(tg_user.id):
+    if tg_user is None or not _is_admin(tg_user.id) or not _is_admin_bot(message):
         return
 
     args = (message.text or "").split(maxsplit=1)
