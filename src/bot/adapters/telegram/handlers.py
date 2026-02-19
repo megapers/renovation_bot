@@ -228,13 +228,25 @@ async def deleteproject_confirm(callback: CallbackQuery) -> None:
 
         project_name = project.name
 
-        # Delete related data (messages, embeddings) that reference project
-        # Stages, budget_items, change_logs, project_roles cascade via FK
-        from bot.db.models import Message as Msg, Embedding
-        await session.execute(
-            select(Msg).where(Msg.project_id == project_id).execution_options(synchronize_session="fetch")
+        # Delete all related data explicitly to avoid ORM cascade issues
+        from bot.db.models import (
+            BudgetItem, ChangeLog, Embedding, Message as Msg,
+            ProjectRole, Stage, SubStage,
         )
         from sqlalchemy import delete
+
+        # Sub-stages (via stage FK)
+        await session.execute(
+            delete(SubStage).where(
+                SubStage.stage_id.in_(
+                    select(Stage.id).where(Stage.project_id == project_id)
+                )
+            )
+        )
+        await session.execute(delete(ChangeLog).where(ChangeLog.project_id == project_id))
+        await session.execute(delete(BudgetItem).where(BudgetItem.project_id == project_id))
+        await session.execute(delete(Stage).where(Stage.project_id == project_id))
+        await session.execute(delete(ProjectRole).where(ProjectRole.project_id == project_id))
         await session.execute(delete(Msg).where(Msg.project_id == project_id))
         await session.execute(delete(Embedding).where(Embedding.project_id == project_id))
         await session.delete(project)
