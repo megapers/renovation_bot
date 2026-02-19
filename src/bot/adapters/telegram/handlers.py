@@ -8,9 +8,10 @@ the adapter layer.
 
 import logging
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.db.models import User
 from bot.db.repositories import get_user_by_telegram_id, get_user_projects
@@ -118,3 +119,141 @@ async def cmd_myprojects(message: Message, **kwargs) -> None:
     lines.append(f"\nВсего проектов: {len(projects)}")
 
     await message.answer("\n".join(lines))
+
+
+# ═══════════════════════════════════════════════════════════════
+# /deleteproject — remove a project
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.message(Command("deleteproject"))
+async def cmd_deleteproject(message: Message, state: FSMContext, **kwargs) -> None:
+    """
+    /deleteproject — delete a project and all its data.
+
+    Shows a project picker (if multiple), then asks for confirmation.
+    Only the project owner can delete.
+    """
+    tg_user = message.from_user
+    if tg_user is None:
+        return
+
+    await state.clear()
+
+    async with async_session_factory() as session:
+        user = await get_user_by_telegram_id(session, tg_user.id)
+        if user is None:
+            await message.answer("❌ Вы не зарегистрированы. Отправьте /start сначала.")
+            return
+
+        projects = await get_user_projects(session, user.id, tenant_id=kwargs.get("tenant_id"))
+
+    if not projects:
+        await message.answer("У вас нет проектов для удаления.")
+        return
+
+    if len(projects) == 1:
+        # Single project — go straight to confirmation
+        p = projects[0]
+        await message.answer(
+            f"🗑 <b>Удалить проект?</b>\n\n"
+            f"🏠 {p.name}\n"
+            f"{'💰 ' + f'{p.total_budget:,.0f} ₸' if p.total_budget else ''}\n\n"
+            f"⚠️ Будут удалены все этапы, расходы, сообщения и история.\n"
+            f"Это действие <b>необратимо</b>.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delprj_yes:{p.id}"),
+                    InlineKeyboardButton(text="❌ Отмена", callback_data="delprj_no"),
+                ],
+            ]),
+        )
+    else:
+        # Multiple projects — show picker
+        rows = [
+            [InlineKeyboardButton(text=f"🏠 {p.name}", callback_data=f"delprj_pick:{p.id}")]
+            for p in projects
+        ]
+        rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="delprj_no")])
+        await message.answer(
+            "🗑 Выберите проект для удаления:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+
+@router.callback_query(F.data.startswith("delprj_pick:"))
+async def deleteproject_pick(callback: CallbackQuery) -> None:
+    """User picked a project to delete — show confirmation."""
+    await callback.answer()
+    project_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+
+    async with async_session_factory() as session:
+        from bot.db.models import Project
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        p = result.scalar_one_or_none()
+
+    if not p:
+        await callback.message.edit_text("❌ Проект не найден.")  # type: ignore[union-attr]
+        return
+
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        f"🗑 <b>Удалить проект?</b>\n\n"
+        f"🏠 {p.name}\n"
+        f"{'💰 ' + f'{p.total_budget:,.0f} ₸' if p.total_budget else ''}\n\n"
+        f"⚠️ Будут удалены все этапы, расходы, сообщения и история.\n"
+        f"Это действие <b>необратимо</b>.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delprj_yes:{p.id}"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="delprj_no"),
+            ],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("delprj_yes:"))
+async def deleteproject_confirm(callback: CallbackQuery) -> None:
+    """Confirmed deletion — delete the project and all related data."""
+    await callback.answer()
+    project_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+
+    async with async_session_factory() as session:
+        from bot.db.models import Project
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one_or_none()
+
+        if not project:
+            await callback.message.edit_text("❌ Проект не найден.")  # type: ignore[union-attr]
+            return
+
+        project_name = project.name
+
+        # Delete related data (messages, embeddings) that reference project
+        # Stages, budget_items, change_logs, project_roles cascade via FK
+        from bot.db.models import Message as Msg, Embedding
+        await session.execute(
+            select(Msg).where(Msg.project_id == project_id).execution_options(synchronize_session="fetch")
+        )
+        from sqlalchemy import delete
+        await session.execute(delete(Msg).where(Msg.project_id == project_id))
+        await session.execute(delete(Embedding).where(Embedding.project_id == project_id))
+        await session.delete(project)
+        await session.commit()
+
+    logger.info(
+        "Project deleted: %s (id=%d) by user %d",
+        project_name, project_id,
+        callback.from_user.id if callback.from_user else 0,
+    )
+
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        f"✅ Проект <b>{project_name}</b> удалён.\n\n"
+        f"Все этапы, расходы и история удалены."
+    )
+
+
+@router.callback_query(F.data == "delprj_no")
+async def deleteproject_cancel(callback: CallbackQuery) -> None:
+    """Cancel project deletion."""
+    await callback.answer()
+    await callback.message.edit_text("❌ Удаление отменено.")  # type: ignore[union-attr]
