@@ -439,15 +439,15 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext, bot: Bot, 
     reply_text = f"✅ <b>Проект создан!</b>\n\n{summary}"
 
     if bot_username and callback.message.chat.type == "private":  # type: ignore[union-attr]
-        # Show "Add to group" button only in private chat
+        # Show instructions + deep link button
         reply_text += (
-            "\n\n👥 Чтобы привязать проект к рабочей группе, "
-            "нажмите кнопку ниже или добавьте бота в группу и "
-            "отправьте /link"
+            "\n\n👥 <b>Как привязать к группе:</b>\n"
+            "1️⃣ Добавьте бота в группу вручную "
+            f"(найдите @{bot_username} при добавлении участников)\n"
+            "2️⃣ Отправьте /link в группе\n\n"
+            "Или нажмите кнопку ниже (📱 работает на мобильном):"
         )
-        deep_link_url = (
-            f"tg://resolve?domain={bot_username}&startgroup=proj_{project.id}"
-        )
+        deep_link_url = f"https://t.me/{bot_username}?startgroup=proj_{project.id}"
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text="👥 Добавить бота в группу",
