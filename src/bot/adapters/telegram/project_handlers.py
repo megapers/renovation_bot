@@ -446,7 +446,7 @@ async def confirm_project(callback: CallbackQuery, state: FSMContext, bot: Bot, 
             "отправьте /link"
         )
         deep_link_url = (
-            f"https://t.me/{bot_username}?startgroup=proj_{project.id}"
+            f"tg://resolve?domain={bot_username}&startgroup=proj_{project.id}"
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
