@@ -465,6 +465,13 @@ async def _save_expense(target: Message, state: FSMContext) -> None:
             new_value=str(total),
             user_id=None,  # TODO: pass user_id through state
         )
+
+        # Invalidate caches affected by new expense
+        from bot.services.pg_cache import pg_cache_invalidate, refresh_views
+        await pg_cache_invalidate(session, f"budget:{project_id}")
+        await pg_cache_invalidate(session, f"ask:{project_id}:")
+        await refresh_views(session)
+
         await session.commit()
 
     label = get_category_label(category)

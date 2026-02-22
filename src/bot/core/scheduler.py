@@ -29,7 +29,7 @@ from bot.core.notification_service import (
 )
 from bot.db import repositories as repo
 from bot.db.models import RoleType, StageStatus
-from bot.db.session import get_session
+from bot.db.session import async_session_factory, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +361,16 @@ def start_scheduler(send_notification: NotificationSender) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Cache maintenance — cleanup expired entries + refresh views every 60s
+    _scheduler.add_job(
+        _cache_maintenance,
+        "interval",
+        seconds=60,
+        id="cache_maintenance",
+        name="Cache cleanup and view refresh",
+        replace_existing=True,
+    )
+
     _scheduler.start()
     logger.info("Scheduler started with %d jobs", len(_scheduler.get_jobs()))
     return _scheduler
@@ -373,3 +383,15 @@ def stop_scheduler() -> None:
         _scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped")
     _scheduler = None
+
+
+async def _cache_maintenance() -> None:
+    """Periodic cache cleanup and materialized view refresh."""
+    try:
+        from bot.services.pg_cache import pg_cache_cleanup, refresh_views
+        async with async_session_factory() as session:
+            await pg_cache_cleanup(session)
+            await refresh_views(session)
+            await session.commit()
+    except Exception as e:
+        logger.debug("Cache maintenance: %s", e)

@@ -76,17 +76,38 @@ class RoleMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         async with async_session_factory() as session:
-            # Load user
-            user = await get_user_by_telegram_id(session, tg_user.id)
+            # Load user (with cache — avoids DB hit on every message)
+            from bot.services.pg_cache import pg_cache_get, pg_cache_set
+            cache_key = f"user:tg:{tg_user.id}"
+            cached_user_id = await pg_cache_get(session, cache_key)
+
+            if cached_user_id is not None:
+                # Cache hit — load user by internal ID (faster than telegram_id lookup)
+                from bot.db.repositories import get_user_by_id
+                user = await get_user_by_id(session, cached_user_id)
+            else:
+                user = await get_user_by_telegram_id(session, tg_user.id)
+                if user:
+                    await pg_cache_set(session, cache_key, user.id, ttl=600)
+                    await session.commit()
             logger.debug(
                 "RoleMiddleware: tg_user.id=%d, found user=%s, chat_id=%s",
                 tg_user.id, user, chat_id,
             )
 
-            # Load project from group chat
+            # Load project from group chat (with cache)
             project = None
             if chat_id and chat_id < 0:  # negative = group chat
-                project = await get_project_by_telegram_chat_id(session, chat_id)
+                proj_cache_key = f"project:chat:{chat_id}"
+                cached_proj_id = await pg_cache_get(session, proj_cache_key)
+                if cached_proj_id is not None:
+                    from bot.db.repositories import get_project_with_stages
+                    project = await get_project_with_stages(session, cached_proj_id)
+                else:
+                    project = await get_project_by_telegram_chat_id(session, chat_id)
+                    if project:
+                        await pg_cache_set(session, proj_cache_key, project.id, ttl=600)
+                        await session.commit()
 
             # Load roles
             user_roles: list[RoleType] = []

@@ -69,22 +69,25 @@ async def ask_project(
     """
     Answer a question about a project using RAG.
 
-    Args:
-        session: async DB session
-        project_id: the project to query about
-        question: user's question in natural language
-        project_context: optional pre-built project summary
-            (stages, budget, etc.) to include as context
-        top_k: number of similar chunks to retrieve
-
-    Returns:
-        AI-generated answer (Russian).
+    Responses are cached in PostgreSQL for 5 minutes to avoid
+    redundant AI calls for similar questions.
     """
     if not is_ai_configured():
         return (
             "⚠️ AI-сервис не настроен. Для работы с умным помощником "
             "необходимо настроить Azure OpenAI в .env файле."
         )
+
+    # Check cache for recent identical question
+    import hashlib
+    from bot.services.pg_cache import pg_cache_get, pg_cache_set
+    q_hash = hashlib.md5(question.lower().strip().encode()).hexdigest()[:12]
+    cache_key = f"ask:{project_id}:{q_hash}"
+
+    cached_answer = await pg_cache_get(session, cache_key)
+    if cached_answer is not None:
+        logger.debug("RAG cache hit: %s", cache_key)
+        return cached_answer
 
     # 1. Retrieve relevant context via hybrid search (vector + full-text)
     similar_chunks = await search_hybrid(
@@ -133,6 +136,10 @@ async def ask_project(
     ]
 
     answer = await chat_completion(messages, temperature=0.4, max_tokens=1500)
+
+    # Cache the answer for 5 minutes
+    await pg_cache_set(session, cache_key, answer, ttl=300)
+
     logger.info(
         "RAG answer: project_id=%d, question='%s...', %d chunks used",
         project_id,
