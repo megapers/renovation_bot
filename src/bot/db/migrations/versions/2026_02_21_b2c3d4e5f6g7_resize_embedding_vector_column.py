@@ -22,30 +22,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Drop the HNSW index (it's dimension-specific)
-    op.execute("DROP INDEX IF EXISTS ix_embeddings_hnsw")
-
-    # Change column type from vector(1536) to vector (no dimension constraint)
-    op.execute("ALTER TABLE embeddings ALTER COLUMN embedding TYPE vector USING embedding::vector")
-
-    # Clear existing embeddings (incompatible dimensions when switching models)
-    # Users should run /backfill after switching embedding models
+    # Clear existing embeddings first (avoids cast issues + incompatible dims)
     op.execute("DELETE FROM embeddings")
 
-    # Recreate HNSW index without dimension constraint
-    # Note: pgvector HNSW requires all vectors to have the same dimensions
-    # at query time, which they will since they come from the same model
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS ix_embeddings_hnsw
-        ON embeddings USING hnsw (embedding vector_cosine_ops)
-    """)
+    # Drop any existing vector indexes
+    op.execute("DROP INDEX IF EXISTS ix_embeddings_hnsw")
+
+    # Change column type to untyped vector (accepts any dimension)
+    # Safe because we just cleared all rows
+    op.execute("ALTER TABLE embeddings ALTER COLUMN embedding TYPE vector USING NULL")
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_embeddings_hnsw")
     op.execute("DELETE FROM embeddings")
-    op.execute("ALTER TABLE embeddings ALTER COLUMN embedding TYPE vector(1536) USING embedding::vector(1536)")
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS ix_embeddings_hnsw
-        ON embeddings USING hnsw (embedding vector_cosine_ops)
-    """)
+    op.execute("DROP INDEX IF EXISTS ix_embeddings_hnsw")
+    op.execute("ALTER TABLE embeddings ALTER COLUMN embedding TYPE vector(1536) USING NULL")
