@@ -110,6 +110,47 @@ AI_CHAT_MODEL=deepseek-chat
 AI_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
+### Self-hosted with Ollama (free, open-source)
+
+Run models locally with zero API costs. Recommended models:
+- **Qwen3 8B/32B** — chat + reasoning (Apache 2.0)
+- **Qwen2.5-VL 7B** — image understanding (Apache 2.0)
+- **BGE-M3** — multilingual embeddings (MIT)
+- **Whisper large-v3** — voice transcription (MIT)
+
+**Setup:**
+
+```bash
+# Start Ollama via Docker
+docker compose --profile ollama up -d
+
+# Pull models
+docker compose exec ollama ollama pull qwen3:8b
+docker compose exec ollama ollama pull bge-m3
+
+# For vision (photos/documents):
+docker compose exec ollama ollama pull qwen2.5vl:7b
+```
+
+**.env:**
+```env
+AI_PROVIDER=openai_compatible
+AI_API_KEY=ollama
+AI_BASE_URL=http://localhost:11434/v1
+AI_CHAT_MODEL=qwen3:8b
+AI_EMBEDDING_MODEL=bge-m3
+AI_EMBEDDING_DIMENSIONS=1024
+```
+
+> **Note:** After switching embedding models, run `alembic upgrade head` (to resize the vector column) and `/backfill` in the bot (to regenerate embeddings).
+
+> **Voice (Whisper):** Ollama doesn't serve Whisper. Use [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) on a separate port, or Groq's free API:
+> ```env
+> AI_WHISPER_BASE_URL=https://api.groq.com/openai/v1
+> AI_WHISPER_API_KEY=gsk_... # free from console.groq.com
+> AI_WHISPER_MODEL=whisper-large-v3
+> ```
+
 ---
 
 ## Testing Guide

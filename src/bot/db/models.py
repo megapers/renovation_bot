@@ -370,7 +370,7 @@ class Embedding(Base):
     )
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     content: Mapped[str] = mapped_column(Text)
-    embedding = mapped_column(Vector(1536))  # text-embedding-3-small outputs 1536 dims
+    embedding = mapped_column(Vector())  # dimensions set by AI_EMBEDDING_DIMENSIONS
     metadata_: Mapped[str | None] = mapped_column("metadata", Text)  # JSON string
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -25,8 +25,9 @@ from bot.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Module-level client (lazy-initialized)
+# Module-level clients (lazy-initialized)
 _client: AsyncOpenAI | AsyncAzureOpenAI | None = None
+_whisper_client: AsyncOpenAI | None = None  # Separate client for STT (optional)
 
 
 def _get_client() -> AsyncOpenAI | AsyncAzureOpenAI:
@@ -122,8 +123,32 @@ def _get_client() -> AsyncOpenAI | AsyncAzureOpenAI:
 
 def reset_client() -> None:
     """Reset the cached client (useful when switching providers at runtime/tests)."""
-    global _client
+    global _client, _whisper_client
     _client = None
+    _whisper_client = None
+
+
+def _get_whisper_client() -> AsyncOpenAI | AsyncAzureOpenAI:
+    """
+    Get the client for Whisper STT.
+
+    If AI_WHISPER_BASE_URL is set, creates a separate client for STT
+    (e.g., faster-whisper-server on a different port, or Groq free API).
+    Otherwise, reuses the main AI client.
+    """
+    global _whisper_client
+    if _whisper_client is not None:
+        return _whisper_client
+
+    if settings.ai_whisper_base_url:
+        _whisper_client = AsyncOpenAI(
+            api_key=settings.ai_whisper_api_key or "not-needed",
+            base_url=settings.ai_whisper_base_url,
+        )
+        logger.info("Whisper client: separate endpoint (%s)", settings.ai_whisper_base_url)
+        return _whisper_client
+
+    return _get_client()
 
 
 def is_ai_configured() -> bool:
@@ -370,7 +395,7 @@ async def transcribe_audio(
     Returns:
         Transcribed text.
     """
-    client = _get_client()
+    client = _get_whisper_client()
     model = settings.effective_whisper_model
 
     response = await client.audio.transcriptions.create(

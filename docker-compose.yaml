@@ -19,5 +19,29 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ── Ollama: local LLM inference server (optional) ──────────
+  # Serves Qwen3, BGE-M3, and other models via OpenAI-compatible API.
+  # To use: set AI_PROVIDER=openai_compatible and AI_BASE_URL=http://ollama:11434/v1
+  # Models are downloaded on first use: docker compose exec ollama ollama pull qwen3:8b
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment for GPU support (NVIDIA):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+    profiles:
+      - ollama   # Only starts with: docker compose --profile ollama up -d
+
 volumes:
   timescaledb_data:
+  ollama_data:

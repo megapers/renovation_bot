@@ -51,8 +51,10 @@ class Settings(BaseSettings):
     ai_base_url: str = ""                   # Base URL (required for openai_compatible)
     ai_chat_model: str = ""                 # e.g. "gpt-4o", "kimi-k2.5", "deepseek-chat"
     ai_embedding_model: str = ""            # e.g. "text-embedding-3-small"
-    ai_embedding_dimensions: int = 1536     # truncate embeddings to fit Vector(1536)
+    ai_embedding_dimensions: int = 1536     # truncate embeddings to fit Vector column
     ai_whisper_model: str = "whisper-1"     # STT model name
+    ai_whisper_base_url: str = ""           # Separate STT endpoint (if different from chat)
+    ai_whisper_api_key: str = ""            # Separate STT API key (e.g. Groq free tier)
 
     # ── Azure OpenAI (only when ai_provider=azure) ───────────
     # Auth: if api_key is empty, Microsoft Entra ID (DefaultAzureCredential) is used
