@@ -1,0 +1,67 @@
+# Production Docker Compose for Oracle Cloud deployment
+# Usage: docker compose -f docker-compose.prod.yaml up -d
+#
+# Prerequisites:
+#   1. Copy .env.example to .env and fill in all values
+#   2. Ensure ports 5432 and 11434 are NOT exposed to the internet
+#
+# Architecture:
+#   bot         → Python app (polling Telegram API)
+#   timescaledb → PostgreSQL 17 + TimescaleDB + pgvector + pgai
+#   ollama      → Local LLM for embeddings (BGE-M3)
+
+services:
+  # ── PostgreSQL + TimescaleDB ──────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb-ha:pg17
+    container_name: timescaledb
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # NOT exposed to host — only accessible within Docker network
+
+  # ── Ollama (embeddings only) ──────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    # NOT exposed to host — only accessible within Docker network
+
+  # ── Renovation Bot ────────────────────────────────────────
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: renovation-bot
+    env_file: .env
+    environment:
+      # Override localhost references to Docker service names
+      - POSTGRES_HOST=timescaledb
+      - AI_EMBEDDING_BASE_URL=http://ollama:11434/v1
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  timescaledb_data:
+  ollama_data:
