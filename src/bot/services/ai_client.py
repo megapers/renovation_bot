@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _client: AsyncOpenAI | AsyncAzureOpenAI | None = None
 _embedding_client: AsyncOpenAI | None = None  # Separate client for embeddings (optional)
 _whisper_client: AsyncOpenAI | None = None  # Separate client for STT (optional)
+_vision_client: AsyncOpenAI | None = None   # Separate client for vision (optional)
 
 
 def _get_client() -> AsyncOpenAI | AsyncAzureOpenAI:
@@ -124,10 +125,11 @@ def _get_client() -> AsyncOpenAI | AsyncAzureOpenAI:
 
 def reset_client() -> None:
     """Reset the cached client (useful when switching providers at runtime/tests)."""
-    global _client, _embedding_client, _whisper_client
+    global _client, _embedding_client, _whisper_client, _vision_client
     _client = None
     _embedding_client = None
     _whisper_client = None
+    _vision_client = None
 
 
 def _get_embedding_client() -> AsyncOpenAI | AsyncAzureOpenAI:
@@ -172,6 +174,29 @@ def _get_whisper_client() -> AsyncOpenAI | AsyncAzureOpenAI:
         )
         logger.info("Whisper client: separate endpoint (%s)", settings.ai_whisper_base_url)
         return _whisper_client
+
+    return _get_client()
+
+
+def _get_vision_client() -> AsyncOpenAI | AsyncAzureOpenAI:
+    """
+    Get the client for vision/image understanding.
+
+    If AI_VISION_BASE_URL is set, creates a separate client
+    (e.g., Google Gemini for vision while chat uses Groq).
+    Otherwise, reuses the main AI client.
+    """
+    global _vision_client
+    if _vision_client is not None:
+        return _vision_client
+
+    if settings.ai_vision_base_url:
+        _vision_client = AsyncOpenAI(
+            api_key=settings.ai_vision_api_key or "not-needed",
+            base_url=settings.ai_vision_base_url,
+        )
+        logger.info("Vision client: separate endpoint (%s)", settings.ai_vision_base_url)
+        return _vision_client
 
     return _get_client()
 
@@ -277,16 +302,27 @@ async def chat_completion_with_vision(
     """
     Send a chat completion with image(s) (Vision).
 
-    Messages should include content blocks with type "image_url".
-    Example message:
-    {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "Describe this image"},
-            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
-        ]
-    }
+    Uses the vision-specific client/model if AI_VISION_BASE_URL is set
+    (e.g., Google Gemini for vision while chat uses Groq).
+    Otherwise falls back to the main chat model.
     """
+    # If a separate vision provider is configured, use it directly
+    if settings.ai_vision_base_url:
+        client = _get_vision_client()
+        model = settings.ai_vision_model or settings.effective_chat_model
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if temperature != 1.0:
+            kwargs["temperature"] = temperature
+
+        response = await client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content or ""
+
+    # Otherwise use the main chat completion (same provider for chat + vision)
     return await chat_completion(
         messages,
         temperature=temperature,

@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     ai_whisper_model: str = "whisper-1"     # STT model name
     ai_whisper_base_url: str = ""           # Separate STT endpoint (if different from chat)
     ai_whisper_api_key: str = ""            # Separate STT API key (e.g. Groq free tier)
+    ai_vision_model: str = ""              # Vision model (if different from chat model)
+    ai_vision_base_url: str = ""           # Separate vision endpoint (e.g. Gemini)
+    ai_vision_api_key: str = ""            # Separate vision API key
 
     # ── Azure OpenAI (only when ai_provider=azure) ───────────
     # Auth: if api_key is empty, Microsoft Entra ID (DefaultAzureCredential) is used
