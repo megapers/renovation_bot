@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Module-level clients (lazy-initialized)
 _client: AsyncOpenAI | AsyncAzureOpenAI | None = None
+_embedding_client: AsyncOpenAI | None = None  # Separate client for embeddings (optional)
 _whisper_client: AsyncOpenAI | None = None  # Separate client for STT (optional)
 
 
@@ -123,9 +124,33 @@ def _get_client() -> AsyncOpenAI | AsyncAzureOpenAI:
 
 def reset_client() -> None:
     """Reset the cached client (useful when switching providers at runtime/tests)."""
-    global _client, _whisper_client
+    global _client, _embedding_client, _whisper_client
     _client = None
+    _embedding_client = None
     _whisper_client = None
+
+
+def _get_embedding_client() -> AsyncOpenAI | AsyncAzureOpenAI:
+    """
+    Get the client for embedding generation.
+
+    If AI_EMBEDDING_BASE_URL is set, creates a separate client
+    (e.g., Ollama on localhost for BGE-M3 while chat uses Groq).
+    Otherwise, reuses the main AI client.
+    """
+    global _embedding_client
+    if _embedding_client is not None:
+        return _embedding_client
+
+    if settings.ai_embedding_base_url:
+        _embedding_client = AsyncOpenAI(
+            api_key=settings.ai_embedding_api_key or "not-needed",
+            base_url=settings.ai_embedding_base_url,
+        )
+        logger.info("Embedding client: separate endpoint (%s)", settings.ai_embedding_base_url)
+        return _embedding_client
+
+    return _get_client()
 
 
 def _get_whisper_client() -> AsyncOpenAI | AsyncAzureOpenAI:
@@ -283,7 +308,7 @@ async def generate_embedding(text: str) -> list[float]:
     Returns:
         List of floats (dimension count matches settings).
     """
-    client = _get_client()
+    client = _get_embedding_client()
     model = settings.effective_embedding_model
     if not model:
         raise RuntimeError(
@@ -335,7 +360,7 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
     Returns:
         List of embedding vectors (same order as input texts).
     """
-    client = _get_client()
+    client = _get_embedding_client()
     model = settings.effective_embedding_model
     if not model:
         raise RuntimeError(
