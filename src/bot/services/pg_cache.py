@@ -78,7 +78,7 @@ async def pg_cache_set(
         value = json.loads(json.dumps(value, default=str, ensure_ascii=False))
 
     await session.execute(
-        text("SELECT cache_set(:key, :value::jsonb, :ttl)"),
+        text("SELECT cache_set(:key, CAST(:value AS jsonb), :ttl)"),
         {"key": key, "value": json.dumps(value, ensure_ascii=False), "ttl": ttl},
     )
     logger.debug("Cache SET: %s (ttl=%ds)", key, ttl)
