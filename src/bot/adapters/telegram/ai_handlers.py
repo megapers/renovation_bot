@@ -33,6 +33,7 @@ from bot.db.session import async_session_factory
 from bot.services.ai_client import is_ai_configured
 from bot.services.embedding_service import embed_and_store
 from bot.services.media_service import build_message_text, process_image, process_voice
+from sqlalchemy import text
 from bot.services.nlp_parser import parse_message as nlp_parse
 from bot.services.rag_service import ask_project, build_project_context
 
@@ -94,7 +95,11 @@ async def _store_and_embed_message(
     file_ref: str | None,
     transcribed_text: str | None,
 ):
-    """Store a message in DB and create an embedding if applicable."""
+    """
+    Store a message in DB. Embeddings are handled by pgai Vectorizer
+    automatically (if configured). Falls back to Python-side embedding
+    if the vectorizer is not set up.
+    """
     async with async_session_factory() as session:
         msg = await repo.create_message(
             session,
@@ -109,24 +114,37 @@ async def _store_and_embed_message(
             transcribed_text=transcribed_text,
         )
 
-        # Embed the canonical text if we have a project
+        # Fallback: Python-side embedding for when pgai Vectorizer is
+        # not configured. The vectorizer worker handles this automatically
+        # when running, so this becomes a no-op in production with the
+        # vectorizer-worker container.
         canonical = build_message_text(
             message_type=message_type.value,
             raw_text=raw_text,
             transcribed_text=transcribed_text,
         )
         if project_id and canonical:
-            await embed_and_store(
-                session,
-                project_id=project_id,
-                content=canonical,
-                metadata={
-                    "source": "message",
-                    "message_id": msg.id,
-                    "message_type": message_type.value,
-                    "user_id": user_id,
-                },
-            )
+            # Check if vectorizer table exists — if so, skip manual embedding
+            try:
+                check = await session.execute(
+                    text("SELECT 1 FROM information_schema.tables WHERE table_name = 'messages_embeddings_auto' LIMIT 1")
+                )
+                vectorizer_active = check.fetchone() is not None
+            except Exception:
+                vectorizer_active = False
+
+            if not vectorizer_active:
+                await embed_and_store(
+                    session,
+                    project_id=project_id,
+                    content=canonical,
+                    metadata={
+                        "source": "message",
+                        "message_id": msg.id,
+                        "message_type": message_type.value,
+                        "user_id": user_id,
+                    },
+                )
 
         await session.commit()
         return msg

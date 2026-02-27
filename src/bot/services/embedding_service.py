@@ -113,30 +113,58 @@ async def search_similar(
     """
     Semantic search: find the most similar stored texts for a project.
 
-    Uses cosine distance with pgvector: 1 - (embedding <=> query_vector).
+    Searches both:
+    1. messages_embeddings_auto (pgai vectorizer — auto-generated)
+    2. embeddings (legacy manual embeddings — fallback)
 
-    Args:
-        project_id: restrict search to this project
-        query_text: the user's question / query
-        top_k: max number of results
-        min_similarity: minimum cosine similarity threshold (0–1)
-
-    Returns:
-        List of dicts: {"id", "content", "metadata", "similarity"}
-        sorted by descending similarity.
+    Results are merged and deduplicated by content.
     """
     if not is_ai_configured():
         return []
 
     query_vector = await generate_embedding(query_text)
+    vec_str = "[" + ",".join(str(v) for v in query_vector) + "]"
 
-    # pgvector cosine distance operator: <=>
-    # similarity = 1 - cosine_distance
-    # Use CAST() instead of :: to avoid asyncpg parameter parsing conflict
-    sql = text("""
+    results: list[dict[str, Any]] = []
+    seen_content: set[str] = set()
+
+    # 1. Search pgai vectorizer table (auto-generated embeddings)
+    try:
+        auto_sql = text("""
+            SELECT
+                e.id, e.chunk AS content,
+                1 - (e.embedding <=> CAST(:query_vec AS vector)) AS similarity
+            FROM messages_embeddings_auto e
+            JOIN messages m ON e.id = m.id
+            WHERE m.project_id = :project_id
+              AND 1 - (e.embedding <=> CAST(:query_vec AS vector)) >= :min_sim
+            ORDER BY e.embedding <=> CAST(:query_vec AS vector)
+            LIMIT :top_k
+        """)
+        auto_result = await session.execute(auto_sql, {
+            "query_vec": vec_str,
+            "project_id": project_id,
+            "min_sim": min_similarity,
+            "top_k": top_k,
+        })
+        for row in auto_result.fetchall():
+            content = row.content or ""
+            if content not in seen_content:
+                seen_content.add(content)
+                results.append({
+                    "id": row.id,
+                    "content": content,
+                    "metadata": {"source": "vectorizer"},
+                    "similarity": float(row.similarity),
+                })
+    except Exception as e:
+        # Table may not exist yet (migration not run)
+        logger.debug("Vectorizer table search failed (may not exist yet): %s", e)
+
+    # 2. Search legacy embeddings table (manual/backfill embeddings)
+    legacy_sql = text("""
         SELECT
-            id,
-            content,
+            id, content,
             metadata AS metadata_,
             1 - (embedding <=> CAST(:query_vec AS vector)) AS similarity
         FROM embeddings
@@ -145,36 +173,32 @@ async def search_similar(
         ORDER BY embedding <=> CAST(:query_vec AS vector)
         LIMIT :top_k
     """)
+    legacy_result = await session.execute(legacy_sql, {
+        "query_vec": vec_str,
+        "project_id": project_id,
+        "min_sim": min_similarity,
+        "top_k": top_k,
+    })
+    for row in legacy_result.fetchall():
+        content = row.content or ""
+        if content not in seen_content:
+            seen_content.add(content)
+            metadata = None
+            if row.metadata_:
+                try:
+                    metadata = json.loads(row.metadata_)
+                except json.JSONDecodeError:
+                    metadata = {"raw": row.metadata_}
+            results.append({
+                "id": row.id,
+                "content": content,
+                "metadata": metadata,
+                "similarity": float(row.similarity),
+            })
 
-    # Convert vector to string format pgvector expects: [0.1, 0.2, ...]
-    vec_str = "[" + ",".join(str(v) for v in query_vector) + "]"
-
-    result = await session.execute(
-        sql,
-        {
-            "query_vec": vec_str,
-            "project_id": project_id,
-            "min_sim": min_similarity,
-            "top_k": top_k,
-        },
-    )
-    rows = result.fetchall()
-
-    results = []
-    for row in rows:
-        metadata = None
-        if row.metadata_:
-            try:
-                metadata = json.loads(row.metadata_)
-            except json.JSONDecodeError:
-                metadata = {"raw": row.metadata_}
-
-        results.append({
-            "id": row.id,
-            "content": row.content,
-            "metadata": metadata,
-            "similarity": float(row.similarity),
-        })
+    # Sort by similarity descending and limit
+    results.sort(key=lambda x: x["similarity"], reverse=True)
+    results = results[:top_k]
 
     logger.debug(
         "Semantic search: project_id=%d query='%s' → %d results (top sim=%.3f)",

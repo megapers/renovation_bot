@@ -42,6 +42,23 @@ services:
     profiles:
       - ollama   # Only starts with: docker compose --profile ollama up -d
 
+  # ── pgai Vectorizer Worker (optional) ──────────────────────
+  # Automatically creates/updates embeddings when messages are inserted.
+  # Start with: docker compose --profile ollama up -d
+  vectorizer-worker:
+    image: timescale/pgai-vectorizer-worker:latest
+    container_name: vectorizer-worker
+    environment:
+      PGAI_VECTORIZER_WORKER_DB_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+      OLLAMA_HOST: http://ollama:11434
+    command: ["--poll-interval", "5s"]
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - ollama   # Only starts with: docker compose --profile ollama up -d
+
 volumes:
   timescaledb_data:
   ollama_data:

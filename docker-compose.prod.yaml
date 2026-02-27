@@ -6,9 +6,10 @@
 #   2. Ensure ports 5432 and 11434 are NOT exposed to the internet
 #
 # Architecture:
-#   bot         → Python app (polling Telegram API)
-#   timescaledb → PostgreSQL 17 + TimescaleDB + pgvector + pgai
-#   ollama      → Local LLM for embeddings (BGE-M3)
+#   bot              → Python app (polling Telegram API)
+#   timescaledb      → PostgreSQL 17 + TimescaleDB + pgvector + pgai
+#   ollama           → Local LLM for embeddings (BGE-M3)
+#   vectorizer-worker → pgai auto-embedding worker (keeps embeddings in sync)
 
 services:
   # ── PostgreSQL + TimescaleDB ──────────────────────────────
@@ -28,9 +29,8 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    # NOT exposed to host — only accessible within Docker network
 
-  # ── Ollama (embeddings only) ──────────────────────────────
+  # ── Ollama (embeddings + chat for local models) ───────────
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -42,7 +42,24 @@ services:
       timeout: 10s
       retries: 3
     restart: unless-stopped
-    # NOT exposed to host — only accessible within Docker network
+
+  # ── pgai Vectorizer Worker ───────────────────────────────
+  # Automatically creates and updates embeddings when messages
+  # are inserted/updated. No manual /backfill needed.
+  # See: https://github.com/timescale/pgai
+  vectorizer-worker:
+    image: timescale/pgai-vectorizer-worker:latest
+    container_name: vectorizer-worker
+    environment:
+      PGAI_VECTORIZER_WORKER_DB_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+      OLLAMA_HOST: http://ollama:11434
+    command: ["--poll-interval", "5s"]
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
 
   # ── Renovation Bot ────────────────────────────────────────
   bot:
@@ -52,7 +69,6 @@ services:
     container_name: renovation-bot
     env_file: .env
     environment:
-      # Override localhost references to Docker service names
       - POSTGRES_HOST=timescaledb
       - AI_EMBEDDING_BASE_URL=http://ollama:11434/v1
     depends_on:
