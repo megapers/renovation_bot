@@ -25,7 +25,10 @@ RUN pip install --no-cache-dir -e "."
 # Copy remaining files
 COPY alembic.ini ./
 COPY docker/ ./docker/
-COPY skills/ ./skills/ 2>/dev/null || true
+
+# Copy skills directory if it exists (optional)
+RUN mkdir -p ./skills/
+COPY skill[s]/ ./skills/
 
 # Run as non-root user
 RUN useradd -m -r botuser && chown -R botuser:botuser /app
