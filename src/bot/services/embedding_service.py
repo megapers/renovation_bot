@@ -159,6 +159,8 @@ async def search_similar(
                 })
     except Exception as e:
         # Table may not exist yet (migration not run)
+        # Rollback the failed transaction so subsequent queries work
+        await session.rollback()
         logger.debug("Vectorizer table search failed (may not exist yet): %s", e)
 
     # 2. Search legacy embeddings table (manual/backfill embeddings)
